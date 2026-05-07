@@ -10,6 +10,8 @@ static uint32_t s_prev_step_ms    = 0;
 static uint32_t s_last_cadence_ms = 0;
 static bool     s_above           = false;
 static uint16_t s_thresh_mg       = STEP_PEAK_THRESH_MG;
+static uint16_t s_min_ms          = STEP_MIN_INTERVAL_MS;
+static uint16_t s_max_ms          = STEP_MAX_INTERVAL_MS;
 
 static int16_t mag_mg(int16_t x, int16_t y, int16_t z)
 {
@@ -43,6 +45,15 @@ void steps_set_thresh_mg(uint16_t mg)
     s_thresh_mg = mg;
 }
 
+void steps_set_intervals_ms(uint16_t min_ms, uint16_t max_ms)
+{
+    if (min_ms < 50)        min_ms = 50;
+    if (max_ms > 5000)      max_ms = 5000;
+    if (min_ms >= max_ms)   max_ms = min_ms + 100;
+    s_min_ms = min_ms;
+    s_max_ms = max_ms;
+}
+
 uint32_t steps_get_cadence_ms(void)
 {
     /* Stale if last step was > 3 s ago. */
@@ -69,7 +80,7 @@ void steps_add_sample(int16_t x_mg, int16_t y_mg, int16_t z_mg)
 
     if (!s_above && delta > (int16_t)s_thresh_mg) {
         uint32_t gap = now - s_last_peak_ms;
-        if (gap >= STEP_MIN_INTERVAL_MS && gap <= STEP_MAX_INTERVAL_MS) {
+        if (gap >= s_min_ms && gap <= s_max_ms) {
             s_count++;
             if (s_prev_step_ms != 0) {
                 s_last_cadence_ms = now - s_prev_step_ms;

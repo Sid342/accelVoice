@@ -2,19 +2,32 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* Runtime-tunable thresholds — defaults in app_config.h, overridable from
- * /config endpoint, persisted in NVS namespace "atovio".                    */
+#define CFG_WIFI_FIELD_LEN 64
+
 typedef struct {
-    uint16_t motion_thresh_mg;   /* 10..200 */
-    uint16_t still_sec;          /* 1..30   */
-    uint16_t offbody_sec;        /* 5..120  */
-    uint16_t step_thresh_mg;     /* 50..500 */
+    /* Wear */
+    uint16_t motion_thresh_mg;
+    uint16_t still_sec;
+    uint16_t offbody_sec;
+    /* Steps */
+    uint16_t step_thresh_mg;
+    uint16_t step_min_ms;
+    uint16_t step_max_ms;
+    /* Respiration */
+    uint8_t  bpm_min;
+    uint8_t  bpm_max;
+    uint8_t  resp_window_sec;
+    /* Calibration */
     int16_t  cal_x_mg;
     int16_t  cal_y_mg;
     int16_t  cal_z_mg;
+    /* WiFi STA */
+    char     wifi_ssid[CFG_WIFI_FIELD_LEN];
+    char     wifi_pass[CFG_WIFI_FIELD_LEN];
+    bool     wifi_sta_enabled;
 } cfg_t;
 
-void   cfg_load(void);                /* read NVS → in-memory; defaults if missing */
-void   cfg_save(void);                /* write in-memory → NVS                     */
-cfg_t *cfg_get(void);                 /* mutable pointer to in-memory config       */
-void   cfg_apply(void);               /* push current values into wear/accel/steps */
+void   cfg_load(void);
+void   cfg_save(void);
+cfg_t *cfg_get(void);
+void   cfg_apply(void);     /* push runtime values into modules */

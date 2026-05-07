@@ -35,6 +35,9 @@
 #include "config.h"
 #include "samplelog.h"
 #include "motionlog.h"
+#include "find.h"
+#include "wifi_sta.h"
+#include "ble_find.h"
 #include "web_index.h"
 
 static WebServer http(WIFI_HTTP_PORT);
@@ -90,6 +93,11 @@ static String kv_str(const String &b, const char *key)
 /* ── LED encoding ────────────────────────────────────────────────────────── */
 static void apply_status_led(uint32_t now)
 {
+    /* Find-my-device strobe overrides everything. */
+    if (find_active(now)) {
+        digitalWrite(PIN_LED_STATUS, find_led_high(now) ? HIGH : LOW);
+        return;
+    }
     bool ionizer = ionizer_state();
     bool pulse   = (now < step_pulse_until);
     digitalWrite(PIN_LED_STATUS, (ionizer && !pulse) ? HIGH : LOW);
@@ -98,7 +106,7 @@ static void apply_status_led(uint32_t now)
 /* ── /data live snapshot ────────────────────────────────────────────────── */
 static void handle_data(void)
 {
-    char buf[640];
+    char buf[1024];
     cfg_t *c = cfg_get();
     snprintf(buf, sizeof(buf),
         "{\"t\":%lu,"
@@ -114,8 +122,14 @@ static void handle_data(void)
         "\"ionizer\":%s,"
         "\"battery\":{\"pct\":%u,\"charging\":%s,\"fault\":%s,\"state\":\"%s\"},"
         "\"motion_irq_count\":%lu,"
+        "\"find\":{\"active\":%s,\"remaining_s\":%lu},"
+        "\"ble\":{\"advertising\":%s,\"remaining_s\":%lu},"
+        "\"net\":{\"ap_ip\":\"%s\",\"sta_status\":\"%s\",\"sta_ip\":\"%s\","
+                  "\"sta_ssid\":\"%s\",\"sta_rssi\":%d,\"sta_enabled\":%s},"
         "\"cfg\":{\"motion_thresh_mg\":%u,\"still_sec\":%u,\"offbody_sec\":%u,"
-                 "\"step_thresh_mg\":%u,\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}}",
+                 "\"step_thresh_mg\":%u,\"step_min_ms\":%u,\"step_max_ms\":%u,"
+                 "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
+                 "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}}",
         (unsigned long)millis(),
         (unsigned long)(millis() / 1000UL),
         wear_get_state() == WEAR_STATE_ON_BODY ? "on" : "off",
@@ -130,7 +144,15 @@ static void handle_data(void)
         battsim_get_pct(), battsim_is_charging() ? "true" : "false",
         battsim_is_fault() ? "true" : "false", battsim_state_str(battsim_get_state()),
         (unsigned long)motionlog_count(),
-        c->motion_thresh_mg, c->still_sec, c->offbody_sec, c->step_thresh_mg,
+        find_active(millis()) ? "true" : "false",
+        (unsigned long)((find_remaining_ms(millis()) + 999) / 1000),
+        ble_find_is_advertising() ? "true" : "false",
+        (unsigned long)((ble_find_remaining_ms() + 999) / 1000),
+        net_ap_ip(), net_sta_status_str(), net_sta_ip(),
+        net_sta_ssid(), (int)net_sta_rssi(), c->wifi_sta_enabled ? "true" : "false",
+        c->motion_thresh_mg, c->still_sec, c->offbody_sec,
+        c->step_thresh_mg, c->step_min_ms, c->step_max_ms,
+        c->bpm_min, c->bpm_max, c->resp_window_sec,
         c->cal_x_mg, c->cal_y_mg, c->cal_z_mg);
     http.sendHeader("Cache-Control", "no-store");
     http.send(200, "application/json", buf);
@@ -139,12 +161,16 @@ static void handle_data(void)
 /* ── /config GET + POST ─────────────────────────────────────────────────── */
 static void handle_config_get(void)
 {
-    char buf[256];
+    char buf[400];
     cfg_t *c = cfg_get();
     snprintf(buf, sizeof(buf),
              "{\"motion_thresh_mg\":%u,\"still_sec\":%u,\"offbody_sec\":%u,"
-             "\"step_thresh_mg\":%u,\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}",
-             c->motion_thresh_mg, c->still_sec, c->offbody_sec, c->step_thresh_mg,
+             "\"step_thresh_mg\":%u,\"step_min_ms\":%u,\"step_max_ms\":%u,"
+             "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
+             "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}",
+             c->motion_thresh_mg, c->still_sec, c->offbody_sec,
+             c->step_thresh_mg, c->step_min_ms, c->step_max_ms,
+             c->bpm_min, c->bpm_max, c->resp_window_sec,
              c->cal_x_mg, c->cal_y_mg, c->cal_z_mg);
     http.send(200, "application/json", buf);
 }
@@ -161,6 +187,16 @@ static void handle_config_post(void)
     if (v >= 5 && v <= 300) c->offbody_sec = v;
     v = kv_int(body, "step_thresh_mg", -1);
     if (v >= 50 && v <= 1000) c->step_thresh_mg = v;
+    v = kv_int(body, "step_min_ms", -1);
+    if (v >= 50 && v <= 5000) c->step_min_ms = v;
+    v = kv_int(body, "step_max_ms", -1);
+    if (v >= 100 && v <= 10000) c->step_max_ms = v;
+    v = kv_int(body, "bpm_min", -1);
+    if (v >= 1 && v <= 30) c->bpm_min = v;
+    v = kv_int(body, "bpm_max", -1);
+    if (v >= 5 && v <= 60) c->bpm_max = v;
+    v = kv_int(body, "resp_window_sec", -1);
+    if (v >= 5 && v <= 15) c->resp_window_sec = v;
     cfg_apply();
     cfg_save();
     handle_config_get();
@@ -265,17 +301,148 @@ static void handle_motionlog(void)
     http.send(200, "application/json", buf);
 }
 
+/* ── /wifi GET (status) + POST (set creds) ─────────────────────────────── */
+static void handle_wifi_get(void)
+{
+    cfg_t *c = cfg_get();
+    char buf[300];
+    snprintf(buf, sizeof(buf),
+             "{\"sta_enabled\":%s,\"sta_ssid\":\"%s\",\"sta_status\":\"%s\","
+             "\"sta_ip\":\"%s\",\"sta_rssi\":%d,\"ap_ip\":\"%s\","
+             "\"ap_ssid\":\"%s\"}",
+             c->wifi_sta_enabled ? "true" : "false", c->wifi_ssid,
+             net_sta_status_str(), net_sta_ip(), (int)net_sta_rssi(),
+             net_ap_ip(), WIFI_AP_SSID);
+    http.send(200, "application/json", buf);
+}
+static void handle_wifi_post(void)
+{
+    String body = http.arg("plain");
+    cfg_t *c = cfg_get();
+    String ssid = kv_str(body, "ssid");
+    String pass = kv_str(body, "password");
+    bool   en   = kv_bool(body, "enabled", c->wifi_sta_enabled);
+
+    if (ssid.length() > 0) {
+        strncpy(c->wifi_ssid, ssid.c_str(), CFG_WIFI_FIELD_LEN - 1);
+        c->wifi_ssid[CFG_WIFI_FIELD_LEN - 1] = '\0';
+    }
+    if (pass.length() > 0) {
+        strncpy(c->wifi_pass, pass.c_str(), CFG_WIFI_FIELD_LEN - 1);
+        c->wifi_pass[CFG_WIFI_FIELD_LEN - 1] = '\0';
+    }
+    c->wifi_sta_enabled = en;
+    cfg_save();
+    net_sta_apply(c->wifi_ssid, c->wifi_pass, en);
+    handle_wifi_get();
+}
+
+/* ── /ble/start, /ble/stop ─────────────────────────────────────────────── */
+static void handle_ble_start(void)
+{
+    String body = http.arg("plain");
+    int min = kv_int(body, "minutes", 5);
+    if (min < 1)  min = 1;
+    if (min > 60) min = 60;
+    ble_find_start_adv((uint32_t)min * 60UL * 1000UL);
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"advertising\":true,\"remaining_min\":%d}", min);
+    http.send(200, "application/json", buf);
+}
+static void handle_ble_stop(void)
+{
+    ble_find_stop_adv();
+    http.send(200, "application/json", "{\"advertising\":false}");
+}
+
+/* ── /system (OTA + network + build info) ──────────────────────────────── */
+static void handle_system(void)
+{
+    char buf[400];
+    snprintf(buf, sizeof(buf),
+             "{\"hostname\":\"atovio\","
+              "\"ap_ip\":\"%s\",\"sta_ip\":\"%s\","
+              "\"ota_port\":3232,"
+              "\"upload_cmd\":\"arduino-cli upload --upload-port atovio.local --fqbn esp32:esp32:esp32 .\","
+              "\"build_date\":\"" __DATE__ " " __TIME__ "\","
+              "\"free_heap\":%lu,\"chip_model\":\"%s\","
+              "\"sdk\":\"%s\"}",
+             net_ap_ip(), net_sta_ip(),
+             (unsigned long)ESP.getFreeHeap(),
+             ESP.getChipModel(), ESP.getSdkVersion());
+    http.send(200, "application/json", buf);
+}
+
+/* ── /settings/export, /settings/import ────────────────────────────────── */
+static void handle_settings_export(void)
+{
+    char buf[600];
+    cfg_t *c = cfg_get();
+    snprintf(buf, sizeof(buf),
+             "{\"motion_thresh_mg\":%u,\"still_sec\":%u,\"offbody_sec\":%u,"
+             "\"step_thresh_mg\":%u,\"step_min_ms\":%u,\"step_max_ms\":%u,"
+             "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
+             "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d,"
+             "\"wifi_ssid\":\"%s\",\"wifi_sta_enabled\":%s}",
+             c->motion_thresh_mg, c->still_sec, c->offbody_sec,
+             c->step_thresh_mg, c->step_min_ms, c->step_max_ms,
+             c->bpm_min, c->bpm_max, c->resp_window_sec,
+             c->cal_x_mg, c->cal_y_mg, c->cal_z_mg,
+             c->wifi_ssid, c->wifi_sta_enabled ? "true" : "false");
+    http.sendHeader("Content-Disposition", "attachment; filename=atovio-settings.json");
+    http.send(200, "application/json", buf);
+}
+static void handle_settings_import(void)
+{
+    String body = http.arg("plain");
+    cfg_t *c = cfg_get();
+    int v;
+    v = kv_int(body, "motion_thresh_mg", -1); if (v > 0) c->motion_thresh_mg = v;
+    v = kv_int(body, "still_sec", -1);        if (v > 0) c->still_sec = v;
+    v = kv_int(body, "offbody_sec", -1);      if (v > 0) c->offbody_sec = v;
+    v = kv_int(body, "step_thresh_mg", -1);   if (v > 0) c->step_thresh_mg = v;
+    v = kv_int(body, "step_min_ms", -1);      if (v > 0) c->step_min_ms = v;
+    v = kv_int(body, "step_max_ms", -1);      if (v > 0) c->step_max_ms = v;
+    v = kv_int(body, "bpm_min", -1);          if (v > 0) c->bpm_min = v;
+    v = kv_int(body, "bpm_max", -1);          if (v > 0) c->bpm_max = v;
+    v = kv_int(body, "resp_window_sec", -1);  if (v > 0) c->resp_window_sec = v;
+    cfg_apply();
+    cfg_save();
+    http.send(200, "application/json", "{\"ok\":true}");
+}
+
+/* ── /find (start), /find/stop ─────────────────────────────────────────── */
+static void handle_find_post(void)
+{
+    String body = http.arg("plain");
+    int sec = kv_int(body, "seconds", 30);
+    if (sec < 1)   sec = 1;
+    if (sec > 600) sec = 600;
+    find_start((uint32_t)sec * 1000UL);
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"active\":true,\"remaining_s\":%d}", sec);
+    http.send(200, "application/json", buf);
+}
+static void handle_find_stop(void)
+{
+    find_stop();
+    http.send(200, "application/json", "{\"active\":false,\"remaining_s\":0}");
+}
+
 /* ── / HTML viewer ──────────────────────────────────────────────────────── */
 static void handle_root(void) { http.send_P(200, "text/html", WEB_INDEX_HTML); }
 static void handle_404(void)  { http.send(404, "text/plain", "not found"); }
 
-static void wifi_ap_start(void)
+static void wifi_start(void)
 {
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(WIFI_AP_SSID, WIFI_AP_PASSWORD);
-    IPAddress ip = WiFi.softAPIP();
+    net_init(WIFI_AP_SSID, WIFI_AP_PASSWORD);
     Serial.print(F("[wifi] AP ")); Serial.print(WIFI_AP_SSID);
-    Serial.print(F(" up @ http://")); Serial.print(ip); Serial.println(F("/"));
+    Serial.print(F(" up @ http://")); Serial.print(net_ap_ip()); Serial.println(F("/"));
+    cfg_t *c = cfg_get();
+    if (c->wifi_sta_enabled && c->wifi_ssid[0] != '\0') {
+        Serial.print(F("[wifi] joining STA: ")); Serial.println(c->wifi_ssid);
+        net_sta_apply(c->wifi_ssid, c->wifi_pass, true);
+    }
 }
 
 static void mdns_start(void)
@@ -322,6 +489,15 @@ static void http_start(void)
     http.on("/api/type10",       HTTP_GET,  handle_api_type10);
     http.on("/log.csv",          HTTP_GET,  handle_log_csv);
     http.on("/motionlog",        HTTP_GET,  handle_motionlog);
+    http.on("/find",             HTTP_POST, handle_find_post);
+    http.on("/find/stop",        HTTP_POST, handle_find_stop);
+    http.on("/wifi",             HTTP_GET,  handle_wifi_get);
+    http.on("/wifi",             HTTP_POST, handle_wifi_post);
+    http.on("/ble/start",        HTTP_POST, handle_ble_start);
+    http.on("/ble/stop",         HTTP_POST, handle_ble_stop);
+    http.on("/system",           HTTP_GET,  handle_system);
+    http.on("/settings/export",  HTTP_GET,  handle_settings_export);
+    http.on("/settings/import",  HTTP_POST, handle_settings_import);
     http.onNotFound(handle_404);
     http.begin();
     Serial.print(F("[http] listening on :")); Serial.println(WIFI_HTTP_PORT);
@@ -352,14 +528,16 @@ void setup(void)
     steps_init();
     samplelog_init();
     motionlog_init();
+    find_init();
     mode_set(APP_MODE_NORMAL);
     battsim_set(80, false, false);
 
     Serial.println(F("[bench] modules ready"));
 
-    wifi_ap_start();
+    wifi_start();
     mdns_start();
     ota_start();
+    ble_find_init();
     http_start();
 
     Serial.println(F("# t=ms w=wear(0|1) x/y/z=mg mag bpm steps mode ion"));
@@ -379,6 +557,8 @@ void loop(void)
 
     ArduinoOTA.handle();
     http.handleClient();
+    net_loop_tick();
+    ble_find_loop_tick();
 
     if (accel_motion_flag_take()) {
         wear_notify_motion();
