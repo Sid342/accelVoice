@@ -26,17 +26,21 @@ Both rigs run identical algorithm code. ESP32 just adds WiFi.
 
 ### Wiring
 
-| MPU6050 | ESP32 DevKit V1 | Notes                        |
-|---------|-----------------|------------------------------|
-| VCC     | 3V3             | 3.3 V — matches signal levels |
-| GND     | GND             |                              |
-| SDA     | GPIO 21         | I²C data                     |
-| SCL     | GPIO 22         | I²C clock                    |
-| INT     | GPIO 4          | motion interrupt             |
-| AD0     | GND             | I²C addr 0x68 (default)      |
+| MPU6050 | ESP32 DevKit V1 | Notes                                       |
+|---------|-----------------|---------------------------------------------|
+| VCC     | Vin (5 V)       | GY-521 has onboard LDO, 5 V OK              |
+| GND     | GND             |                                             |
+| SDA     | D25 / GPIO 25   | I²C data — no strap concern                 |
+| SCL     | D26 / GPIO 26   | I²C clock — no strap concern                |
+| INT     | D27 / GPIO 27   | motion interrupt — no strap concern         |
+| AD0     | GND             | I²C addr 0x68 (default)                     |
 
 Status LED = onboard GPIO 2 (blue). Solid HIGH = on-body, LOW = off-body,
 brief 50 ms LOW-pulse on each step.
+
+**Avoid GPIO 12 for I²C** — it's a strapping pin. The GY-521 has 4.7 kΩ
+pull-ups on SDA/SCL that would yank GPIO 12 HIGH at boot, putting the ESP32
+into 1.8 V flash mode and breaking boot. GPIO 25/26/27 are strap-free.
 
 ## Build & flash
 

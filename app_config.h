@@ -1,9 +1,9 @@
 #pragma once
 
 /* ── Hardware pins (ESP32 DevKit V1) ──────────────────────────────────────── */
-#define PIN_I2C_SDA       21
-#define PIN_I2C_SCL       22
-#define PIN_MPU_INT       4     /* MPU6050 INT → GPIO 4 (interrupt-capable)   */
+#define PIN_I2C_SDA       25    /* MPU6050 SDA → GPIO 25 (D25)                */
+#define PIN_I2C_SCL       26    /* MPU6050 SCL → GPIO 26 (D26)                */
+#define PIN_MPU_INT       27    /* MPU6050 INT → GPIO 27 (D27)                */
 #define PIN_LED_STATUS    2     /* Onboard blue LED on most ESP32 DevKit V1   */
 
 /* ── Accelerometer / Wear detection ───────────────────────────────────────── */
