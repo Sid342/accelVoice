@@ -30,7 +30,7 @@ header{position:sticky;top:0;background:rgba(10,10,12,0.92);backdrop-filter:blur
 .dot.live{background:var(--green);box-shadow:0 0 8px rgba(52,211,153,0.5)}
 .dot.warn{background:var(--amber)}
 .dot.err{background:var(--red)}
-nav{display:flex;gap:2px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+nav{display:flex;flex-wrap:wrap;gap:2px;row-gap:4px}
 nav button{background:transparent;color:var(--dim);border:0;padding:8px 12px;border-radius:6px;
   cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap;transition:all .15s}
 nav button:hover{color:var(--text);background:var(--panel)}
