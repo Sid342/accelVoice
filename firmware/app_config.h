@@ -29,10 +29,12 @@
 #define RESP_BPM_MAX            30    /* > 30 BPM = noise                       */
 
 /* ── Respiration v2 (online peak detector) ───────────────────────────────── */
-#define RESP_MIN_INTERVAL_MS    2000  /* min ms between peaks (= 60000/30)      */
+#define RESP_MIN_INTERVAL_MS    1500  /* min ms between peaks (40 BPM ceiling)  */
 #define RESP_IIR_ALPHA_Q15      1638  /* mean tracker α ≈ 0.05 (≈ 4 s eff window) */
+#define RESP_MIN_AMPLITUDE_MG   10    /* peak-to-peak amplitude gate (filters noise) */
+#define RESP_AXIS_DEFAULT       0     /* 0=Z 1=X 2=Y                             */
 #define RESP_EVENT_RING_SIZE    64
-#define RESP_WAVE_RING_SIZE     300   /* 12 s @ 25 Hz of (z, mean) pairs        */
+#define RESP_WAVE_RING_SIZE     300   /* 12 s @ 25 Hz of (axis, mean) pairs     */
 
 /* ── Step counter ─────────────────────────────────────────────────────────── */
 #define STEP_PEAK_THRESH_MG     200   /* mg above gravity baseline              */

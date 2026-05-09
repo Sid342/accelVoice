@@ -31,6 +31,8 @@ static void load_defaults(void)
     s_cfg.resp_window_sec        = RESP_WINDOW_SEC;
     s_cfg.resp_min_interval_ms   = RESP_MIN_INTERVAL_MS;
     s_cfg.resp_iir_alpha_q15     = RESP_IIR_ALPHA_Q15;
+    s_cfg.resp_min_amplitude_mg  = RESP_MIN_AMPLITUDE_MG;
+    s_cfg.resp_axis              = RESP_AXIS_DEFAULT;
     s_cfg.cal_x_mg         = 0;
     s_cfg.cal_y_mg         = 0;
     s_cfg.cal_z_mg         = 0;
@@ -60,6 +62,8 @@ void cfg_load(void)
     if (s_prefs.isKey("resp_win"))     s_cfg.resp_window_sec  = s_prefs.getUChar("resp_win",      s_cfg.resp_window_sec);
     if (s_prefs.isKey("rmin_ms"))      s_cfg.resp_min_interval_ms = s_prefs.getUShort("rmin_ms",  s_cfg.resp_min_interval_ms);
     if (s_prefs.isKey("riir_a"))       s_cfg.resp_iir_alpha_q15   = s_prefs.getUShort("riir_a",   s_cfg.resp_iir_alpha_q15);
+    if (s_prefs.isKey("rminamp"))      s_cfg.resp_min_amplitude_mg = s_prefs.getShort("rminamp",  s_cfg.resp_min_amplitude_mg);
+    if (s_prefs.isKey("raxis"))        s_cfg.resp_axis            = s_prefs.getUChar("raxis",     s_cfg.resp_axis);
     if (s_prefs.isKey("cal_x"))        s_cfg.cal_x_mg         = s_prefs.getShort("cal_x", 0);
     if (s_prefs.isKey("cal_y"))        s_cfg.cal_y_mg         = s_prefs.getShort("cal_y", 0);
     if (s_prefs.isKey("cal_z"))        s_cfg.cal_z_mg         = s_prefs.getShort("cal_z", 0);
@@ -89,6 +93,8 @@ void cfg_save(void)
     s_prefs.putUChar("resp_win",      s_cfg.resp_window_sec);
     s_prefs.putUShort("rmin_ms",      s_cfg.resp_min_interval_ms);
     s_prefs.putUShort("riir_a",       s_cfg.resp_iir_alpha_q15);
+    s_prefs.putShort("rminamp",       s_cfg.resp_min_amplitude_mg);
+    s_prefs.putUChar("raxis",         s_cfg.resp_axis);
     s_prefs.putShort("cal_x",         s_cfg.cal_x_mg);
     s_prefs.putShort("cal_y",         s_cfg.cal_y_mg);
     s_prefs.putShort("cal_z",         s_cfg.cal_z_mg);
@@ -117,4 +123,6 @@ void cfg_apply(void)
     resp_set_window_sec(s_cfg.resp_window_sec);
     resp_set_min_interval_ms(s_cfg.resp_min_interval_ms);
     resp_set_iir_alpha_q15(s_cfg.resp_iir_alpha_q15);
+    resp_set_min_amplitude_mg(s_cfg.resp_min_amplitude_mg);
+    resp_set_axis((resp_axis_t)s_cfg.resp_axis);
 }

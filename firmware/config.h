@@ -28,6 +28,8 @@ typedef struct {
     /* Respiration v2 */
     uint16_t resp_min_interval_ms;
     uint16_t resp_iir_alpha_q15;
+    int16_t  resp_min_amplitude_mg;
+    uint8_t  resp_axis;            /* 0=Z 1=X 2=Y */
     /* Calibration */
     int16_t  cal_x_mg;
     int16_t  cal_y_mg;

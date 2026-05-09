@@ -186,7 +186,10 @@ static void handle_data2(void)
     snprintf(buf, sizeof(buf),
         "{\"wear\":{\"var\":%d,\"var_thr\":%u,\"grav\":%d,\"grav_thr\":%u,\"signal\":\"%s\"},"
         "\"resp\":{\"mean\":%d,\"instant_bpm\":%u,\"total_events\":%lu,"
-                 "\"min_interval_ms\":%u,\"iir_alpha\":%u},"
+                 "\"min_interval_ms\":%u,\"iir_alpha\":%u,"
+                 "\"amplitude_mg\":%d,\"min_amplitude_mg\":%d,"
+                 "\"axis\":\"%s\",\"phase\":\"%s\","
+                 "\"last_interval_ms\":%u,\"last_peak_ms\":%lu},"
         "\"steps\":{\"signal\":%d,\"threshold\":%d,\"baseline\":%d,"
                   "\"total_events\":%lu,\"gt_count\":%u,"
                   "\"adaptive\":%s,\"bandpass\":%s,\"axis\":\"%s\","
@@ -197,6 +200,12 @@ static void handle_data2(void)
         resp_current_mean_mg(), resp_instant_bpm(),
         (unsigned long)resp_total_events(),
         resp_get_min_interval_ms(), resp_get_iir_alpha_q15(),
+        resp_current_amplitude_mg(), resp_get_min_amplitude_mg(),
+        (resp_get_axis() == RESP_AXIS_X) ? "x" :
+        (resp_get_axis() == RESP_AXIS_Y) ? "y" : "z",
+        (resp_current_phase() == RESP_PHASE_INHALE) ? "inhale" :
+        (resp_current_phase() == RESP_PHASE_EXHALE) ? "exhale" : "flat",
+        resp_last_interval_ms(), (unsigned long)resp_last_peak_ms(),
         steps_current_signal(), steps_current_threshold(),
         steps_current_baseline(),
         (unsigned long)steps_total_events(),
@@ -320,8 +329,10 @@ static void handle_resp_wave(void)
     size_t got = resp_get_wave(z_buf, m_buf, (size_t)n);
 
     String body;
-    body.reserve(32 + got * 12);
-    body  = "{\"n\":"; body += (uint32_t)got;
+    body.reserve(64 + got * 12);
+    body  = "{\"n\":";        body += (uint32_t)got;
+    body += ",\"now\":";      body += (uint32_t)millis();
+    body += ",\"period_ms\":";body += (uint32_t)(1000 / RESP_SAMPLE_HZ);
     body += ",\"z\":[";
     for (size_t i = 0; i < got; i++) { if (i) body += ','; body += (int32_t)z_buf[i]; }
     body += "],\"m\":[";
@@ -334,7 +345,7 @@ static void handle_resp_wave(void)
 /* ── /config GET + POST ─────────────────────────────────────────────────── */
 static void handle_config_get(void)
 {
-    char buf[400];
+    char buf[640];
     cfg_t *c = cfg_get();
     snprintf(buf, sizeof(buf),
              "{\"motion_thresh_mg\":%u,\"still_sec\":%u,\"offbody_sec\":%u,"
@@ -344,6 +355,7 @@ static void handle_config_get(void)
              "\"step_axis\":\"%s\",\"step_amp_window_ms\":%u,"
              "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
              "\"resp_min_interval_ms\":%u,\"resp_iir_alpha_q15\":%u,"
+             "\"resp_min_amplitude_mg\":%d,\"resp_axis\":\"%s\","
              "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}",
              c->motion_thresh_mg, c->still_sec, c->offbody_sec,
              c->wear_var_thresh_mg, c->wear_grav_diff_thresh_mg,
@@ -356,6 +368,8 @@ static void handle_config_get(void)
              c->step_amp_window_ms,
              c->bpm_min, c->bpm_max, c->resp_window_sec,
              c->resp_min_interval_ms, c->resp_iir_alpha_q15,
+             c->resp_min_amplitude_mg,
+             (c->resp_axis == 1) ? "x" : (c->resp_axis == 2) ? "y" : "z",
              c->cal_x_mg, c->cal_y_mg, c->cal_z_mg);
     http.send(200, "application/json", buf);
 }
@@ -404,9 +418,17 @@ static void handle_config_post(void)
     v = kv_int(body, "resp_window_sec", -1);
     if (v >= 5 && v <= 15) c->resp_window_sec = v;
     v = kv_int(body, "resp_min_interval_ms", -1);
-    if (v >= 500 && v <= 10000) c->resp_min_interval_ms = v;
+    if (v >= 300 && v <= 10000) c->resp_min_interval_ms = v;
     v = kv_int(body, "resp_iir_alpha_q15", -1);
     if (v >= 50 && v <= 16384) c->resp_iir_alpha_q15 = v;
+    v = kv_int(body, "resp_min_amplitude_mg", -1);
+    if (v >= 0 && v <= 500) c->resp_min_amplitude_mg = (int16_t)v;
+    {
+        String ax = kv_str(body, "resp_axis");
+        if      (ax == "x") c->resp_axis = 1;
+        else if (ax == "y") c->resp_axis = 2;
+        else if (ax == "z") c->resp_axis = 0;
+    }
     cfg_apply();
     cfg_save();
     handle_config_get();
@@ -923,7 +945,7 @@ void loop(void)
         wear_feed_sample(last_x_mg, last_y_mg, last_z_mg, last_mag_mg);
 
         if (wear_get_state() == WEAR_STATE_ON_BODY) {
-            resp_add_sample(last_z_mg);
+            resp_add_sample(last_x_mg, last_y_mg, last_z_mg);
             steps_add_sample(last_x_mg, last_y_mg, last_z_mg);
         }
     }
