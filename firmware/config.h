@@ -7,8 +7,11 @@
 typedef struct {
     /* Wear */
     uint16_t motion_thresh_mg;
-    uint16_t still_sec;
+    uint16_t still_sec;                   /* v1; ignored by v2, kept for migration */
     uint16_t offbody_sec;
+    /* Wear v2 */
+    uint16_t wear_var_thresh_mg;
+    uint16_t wear_grav_diff_thresh_mg;
     /* Steps */
     uint16_t step_thresh_mg;
     uint16_t step_min_ms;

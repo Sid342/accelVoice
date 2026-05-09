@@ -17,16 +17,39 @@
 #define MPU_MOT_THR_REG         (ACCEL_MOTION_THRESH_MG / 2)
 #define MPU_MOT_DUR_REG         1     /* ms — minimum duration above threshold  */
 
+/* ── Wear v2 (variance + gravity vector) ─────────────────────────────────── */
+#define WEAR_VAR_THRESH_MG       5    /* MAD of magnitude over 1 s; below = still */
+#define WEAR_GRAV_DIFF_THRESH_MG 20   /* 5-sec gravity diff ≈ sin(θ)·1g; 20 mg ≈ 1.1° */
+#define WEAR_GRAV_RING_SEC       5    /* gravity-vector age window in seconds   */
+
 /* ── Respiration sensing ──────────────────────────────────────────────────── */
 #define RESP_SAMPLE_HZ          25    /* must match ACCEL_ODR_HZ                */
 #define RESP_WINDOW_SEC         10    /* analysis window (250 samples @ 25 Hz)  */
 #define RESP_BPM_MIN            8     /* < 8 BPM = not breathing                */
 #define RESP_BPM_MAX            30    /* > 30 BPM = noise                       */
 
+/* ── Respiration v2 (online peak detector) ───────────────────────────────── */
+#define RESP_MIN_INTERVAL_MS    2000  /* min ms between peaks (= 60000/30)      */
+#define RESP_IIR_ALPHA_Q15      1638  /* mean tracker α ≈ 0.05 (≈ 4 s eff window) */
+#define RESP_EVENT_RING_SIZE    64
+#define RESP_WAVE_RING_SIZE     300   /* 12 s @ 25 Hz of (z, mean) pairs        */
+
 /* ── Step counter ─────────────────────────────────────────────────────────── */
 #define STEP_PEAK_THRESH_MG     200   /* mg above gravity baseline              */
 #define STEP_MIN_INTERVAL_MS    300   /* ~3.3 Hz max cadence                    */
 #define STEP_MAX_INTERVAL_MS    1500  /* ~0.66 Hz min cadence                   */
+
+/* ── Steps v2 ─────────────────────────────────────────────────────────────── */
+#define STEP_AMP_WINDOW_MS      2000  /* sliding window for adaptive threshold  */
+#define STEP_ADAPTIVE_FRAC_PCT  50    /* effective_thresh = max(MIN, FRAC% × amp) */
+#define STEP_ADAPTIVE_MIN_MG    80    /* floor for adaptive threshold           */
+#define STEP_AXIS_DEFAULT       0     /* 0=mag 1=x 2=y 3=z                      */
+/* Bandpass IIR coefficients @ fs=25 Hz (single-pole HPF + LPF cascade). */
+#define STEP_HPF_ALPHA_Q15      28890 /* exp(-2π·0.5/25) ≈ 0.8814               */
+#define STEP_LPF_ALPHA_Q15      15422 /* exp(-2π·3.0/25) ≈ 0.4706               */
+#define STEP_EVENT_RING_SIZE    64
+#define STEP_GT_RING_SIZE       128
+#define STEP_AMP_BUF_MAX        128   /* covers up to 5120 ms @ 25 Hz           */
 
 /* ── Serial / Telemetry ───────────────────────────────────────────────────── */
 #define SERIAL_BAUD             115200

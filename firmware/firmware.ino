@@ -179,6 +179,22 @@ static void handle_data(void)
     http.send(200, "application/json", buf);
 }
 
+/* ── /data2 — extended diagnostic snapshot for v2 features ─────────────── */
+static void handle_data2(void)
+{
+    char buf[768];
+    snprintf(buf, sizeof(buf),
+        "{\"wear\":{\"var\":%d,\"var_thr\":%u,\"grav\":%d,\"grav_thr\":%u,\"signal\":\"%s\"},"
+        "\"resp\":{\"mean\":0,\"instant_bpm\":0,\"total_events\":0},"
+        "\"steps\":{\"signal\":0,\"threshold\":0,\"total_events\":0,\"gt_count\":0,"
+                  "\"adaptive\":false,\"bandpass\":false,\"axis\":\"mag\"}}",
+        wear_current_var_mg(), wear_get_var_thresh_mg(),
+        wear_current_grav_diff_mg(), wear_get_grav_diff_thresh_mg(),
+        wear_last_signal());
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
+}
+
 /* ── /config GET + POST ─────────────────────────────────────────────────── */
 static void handle_config_get(void)
 {
@@ -186,10 +202,12 @@ static void handle_config_get(void)
     cfg_t *c = cfg_get();
     snprintf(buf, sizeof(buf),
              "{\"motion_thresh_mg\":%u,\"still_sec\":%u,\"offbody_sec\":%u,"
+             "\"wear_var_thresh_mg\":%u,\"wear_grav_diff_thresh_mg\":%u,"
              "\"step_thresh_mg\":%u,\"step_min_ms\":%u,\"step_max_ms\":%u,"
              "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
              "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}",
              c->motion_thresh_mg, c->still_sec, c->offbody_sec,
+             c->wear_var_thresh_mg, c->wear_grav_diff_thresh_mg,
              c->step_thresh_mg, c->step_min_ms, c->step_max_ms,
              c->bpm_min, c->bpm_max, c->resp_window_sec,
              c->cal_x_mg, c->cal_y_mg, c->cal_z_mg);
@@ -206,6 +224,10 @@ static void handle_config_post(void)
     if (v >= 1 && v <= 30) c->still_sec = v;
     v = kv_int(body, "offbody_sec", -1);
     if (v >= 5 && v <= 300) c->offbody_sec = v;
+    v = kv_int(body, "wear_var_thresh_mg", -1);
+    if (v >= 1 && v <= 500) c->wear_var_thresh_mg = v;
+    v = kv_int(body, "wear_grav_diff_thresh_mg", -1);
+    if (v >= 1 && v <= 1000) c->wear_grav_diff_thresh_mg = v;
     v = kv_int(body, "step_thresh_mg", -1);
     if (v >= 50 && v <= 1000) c->step_thresh_mg = v;
     v = kv_int(body, "step_min_ms", -1);
@@ -617,6 +639,7 @@ static void http_start(void)
 {
     http.on("/",                 HTTP_GET,  handle_root);
     http.on("/data",             HTTP_GET,  handle_data);
+    http.on("/data2",            HTTP_GET,  handle_data2);
     http.on("/config",           HTTP_GET,  handle_config_get);
     http.on("/config",           HTTP_POST, handle_config_post);
     http.on("/mode",             HTTP_POST, handle_mode_post);
@@ -719,6 +742,11 @@ void loop(void)
         last_sample_ms = now;
         accel_read_mg(&last_x_mg, &last_y_mg, &last_z_mg);
         last_mag_mg = mag_mg(last_x_mg, last_y_mg, last_z_mg);
+
+        /* Feed wear v2 every sample, before the on-body gate, so the
+         * variance + gravity-vector trackers can wake the device from
+         * OFF-BODY. */
+        wear_feed_sample(last_x_mg, last_y_mg, last_z_mg, last_mag_mg);
 
         if (wear_get_state() == WEAR_STATE_ON_BODY) {
             resp_add_sample(last_z_mg);

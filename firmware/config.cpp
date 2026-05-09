@@ -14,9 +14,11 @@ static const char *NS = "atovio";
 
 static void load_defaults(void)
 {
-    s_cfg.motion_thresh_mg = ACCEL_MOTION_THRESH_MG;
-    s_cfg.still_sec        = ACCEL_STILL_SEC;
-    s_cfg.offbody_sec      = ACCEL_OFFBODY_SEC;
+    s_cfg.motion_thresh_mg          = ACCEL_MOTION_THRESH_MG;
+    s_cfg.still_sec                 = ACCEL_STILL_SEC;
+    s_cfg.offbody_sec               = ACCEL_OFFBODY_SEC;
+    s_cfg.wear_var_thresh_mg        = WEAR_VAR_THRESH_MG;
+    s_cfg.wear_grav_diff_thresh_mg  = WEAR_GRAV_DIFF_THRESH_MG;
     s_cfg.step_thresh_mg   = STEP_PEAK_THRESH_MG;
     s_cfg.step_min_ms      = STEP_MIN_INTERVAL_MS;
     s_cfg.step_max_ms      = STEP_MAX_INTERVAL_MS;
@@ -38,6 +40,8 @@ void cfg_load(void)
     if (s_prefs.isKey("mot_thr_mg"))   s_cfg.motion_thresh_mg = s_prefs.getUShort("mot_thr_mg",   s_cfg.motion_thresh_mg);
     if (s_prefs.isKey("still_sec"))    s_cfg.still_sec        = s_prefs.getUShort("still_sec",    s_cfg.still_sec);
     if (s_prefs.isKey("offbody_sec"))  s_cfg.offbody_sec      = s_prefs.getUShort("offbody_sec",  s_cfg.offbody_sec);
+    if (s_prefs.isKey("wvar_thr"))     s_cfg.wear_var_thresh_mg       = s_prefs.getUShort("wvar_thr",  s_cfg.wear_var_thresh_mg);
+    if (s_prefs.isKey("wgrav_thr"))    s_cfg.wear_grav_diff_thresh_mg = s_prefs.getUShort("wgrav_thr", s_cfg.wear_grav_diff_thresh_mg);
     if (s_prefs.isKey("step_thr_mg"))  s_cfg.step_thresh_mg   = s_prefs.getUShort("step_thr_mg",  s_cfg.step_thresh_mg);
     if (s_prefs.isKey("step_min"))     s_cfg.step_min_ms      = s_prefs.getUShort("step_min",     s_cfg.step_min_ms);
     if (s_prefs.isKey("step_max"))     s_cfg.step_max_ms      = s_prefs.getUShort("step_max",     s_cfg.step_max_ms);
@@ -59,6 +63,8 @@ void cfg_save(void)
     s_prefs.putUShort("mot_thr_mg",   s_cfg.motion_thresh_mg);
     s_prefs.putUShort("still_sec",    s_cfg.still_sec);
     s_prefs.putUShort("offbody_sec",  s_cfg.offbody_sec);
+    s_prefs.putUShort("wvar_thr",     s_cfg.wear_var_thresh_mg);
+    s_prefs.putUShort("wgrav_thr",    s_cfg.wear_grav_diff_thresh_mg);
     s_prefs.putUShort("step_thr_mg",  s_cfg.step_thresh_mg);
     s_prefs.putUShort("step_min",     s_cfg.step_min_ms);
     s_prefs.putUShort("step_max",     s_cfg.step_max_ms);
@@ -81,6 +87,8 @@ void cfg_apply(void)
     accel_set_motion_thresh_mg(s_cfg.motion_thresh_mg);
     accel_set_offsets_mg(s_cfg.cal_x_mg, s_cfg.cal_y_mg, s_cfg.cal_z_mg);
     wear_set_timings(s_cfg.still_sec, s_cfg.offbody_sec);
+    wear_set_var_thresh_mg(s_cfg.wear_var_thresh_mg);
+    wear_set_grav_diff_thresh_mg(s_cfg.wear_grav_diff_thresh_mg);
     steps_set_thresh_mg(s_cfg.step_thresh_mg);
     steps_set_intervals_ms(s_cfg.step_min_ms, s_cfg.step_max_ms);
     resp_set_filter(s_cfg.bpm_min, s_cfg.bpm_max);

@@ -129,7 +129,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   <div class="section">
     <h2>Live readings</h2>
     <div class="cards">
-      <div class="card"><div class="lbl">Wear</div><div id="w" class="val off">…</div><div class="sub" id="ws">—</div></div>
+      <div class="card"><div class="lbl">Wear</div><div id="w" class="val off">…</div><div class="sub" id="ws">—</div><div class="sub" id="wsig" style="font-size:11px;opacity:0.7">—</div></div>
       <div class="card"><div class="lbl">Steps</div><div id="st" class="val">0</div><div class="sub" id="cad">—</div></div>
       <div class="card" id="bpmcard"><div class="lbl">Respiration</div><div id="bpm" class="val">0</div><div class="sub" id="bsub">—</div></div>
       <div class="card"><div class="lbl">Ionizer (sim)</div><div id="ion" class="val off">OFF</div><div class="sub" id="isub">—</div></div>
@@ -166,7 +166,16 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <div class="row"><label>Off-body seconds</label>
       <input type="range" id="offS" min="5" max="120" step="1" value="30">
       <span id="offSV" class="num">30 s</span></div>
-    <div class="note">Hardware IRQ fires when |Δa| &gt; threshold. After "still" + "off-body" seconds with no IRQ → off-body.</div>
+    <div class="row"><label>Variance threshold (v2)</label>
+      <input type="range" id="wVar" min="1" max="50" step="1" value="5">
+      <span id="wVarV" class="num">5 mg</span></div>
+    <div class="row"><label>Gravity-diff threshold (v2)</label>
+      <input type="range" id="wGrav" min="5" max="200" step="1" value="20">
+      <span id="wGravV" class="num">20 mg</span></div>
+    <div class="note">v2 keeps the device ON-BODY if <strong>any</strong> of three signals fire each second:
+      magnitude variance &gt; var-thr, 5 s gravity-vector drift &gt; grav-thr, or hardware motion IRQ.
+      <em>Still seconds</em> is no longer used (kept only for cfg migration).
+      <strong>Live diagnostics</strong> on the wear card show which signal kept it on.</div>
   </div>
 
   <div class="section">
@@ -532,6 +541,8 @@ async function tick(){
       setSlider('motThr',d.cfg.motion_thresh_mg,'mg');
       setSlider('stillS',d.cfg.still_sec,'s');
       setSlider('offS',d.cfg.offbody_sec,'s');
+      if('wear_var_thresh_mg' in d.cfg) setSlider('wVar',d.cfg.wear_var_thresh_mg,'mg');
+      if('wear_grav_diff_thresh_mg' in d.cfg) setSlider('wGrav',d.cfg.wear_grav_diff_thresh_mg,'mg');
       setSlider('stpThr',d.cfg.step_thresh_mg,'mg');
       setSlider('stpMin',d.cfg.step_min_ms,'ms');
       setSlider('stpMax',d.cfg.step_max_ms,'ms');
@@ -580,6 +591,18 @@ async function tick(){
 }
 setInterval(tick,100);tick();
 
+/* ── /data2 — extended diagnostics (wear v2 / resp v2 / steps v2) ──────── */
+async function tick2(){
+  try{
+    const r=await fetch('/data2',{cache:'no-store'});const d=await r.json();
+    if(d.wear){
+      const w=d.wear;
+      setText('wsig','sig: '+w.signal+' · var '+w.var+'/'+w.var_thr+' · grav '+w.grav+'/'+w.grav_thr+' mg');
+    }
+  }catch(e){}
+}
+setInterval(tick2,1000);tick2();
+
 /* ── Slider/Selector handlers ────────────────────────────────────────────── */
 function bindSlider(id,unit,key,debounce){
   const el=document.getElementById(id);
@@ -600,6 +623,8 @@ bindSlider('stpMax','ms','step_max_ms');
 bindSlider('bpmMin','BPM','bpm_min');
 bindSlider('bpmMax','BPM','bpm_max');
 bindSlider('respWin','s','resp_window_sec');
+bindSlider('wVar','mg','wear_var_thresh_mg');
+bindSlider('wGrav','mg','wear_grav_diff_thresh_mg');
 
 document.getElementById('modeSel').addEventListener('change',e=>{suppress();pj('/mode',JSON.stringify({mode:e.target.value}));});
 document.getElementById('wearSel').addEventListener('change',e=>{suppress();pj('/wear/force',JSON.stringify({state:e.target.value}));});
