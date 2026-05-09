@@ -391,8 +391,9 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <button class="btn act" onclick="cgGt()">I just coughed</button>
       <button class="btn warn" onclick="cgGtClear()">Clear taps</button>
       <button class="btn primary" onclick="cgEval()">Evaluate (±1500 ms)</button>
+      <button class="btn" onclick="cgSim()">Simulate cough</button>
     </div>
-    <div class="note" style="margin-top:8px">Tap once per real cough. Then evaluate to get TP/FP/FN.</div>
+    <div class="note" style="margin-top:8px">Tap once per real cough. Then evaluate to get TP/FP/FN. Simulate fires a synthetic event (UI plumbing test on bench rigs where the 5–15 Hz BP kills desk taps).</div>
     <div class="kv" style="margin-top:8px">
       <dt>GT taps</dt><dd id="cgGtCnt">0</dd>
       <dt>TP / FP / FN</dt><dd id="cgEvalTp">— / — / —</dd>
@@ -1622,6 +1623,7 @@ async function tickCough(){
 }
 setInterval(tickCough,500);
 function cgGt(){pj('/cough/gt','{}').then(r=>r.json()).then(d=>{setText('cgGtCnt',d.count);});}
+function cgSim(){pj('/cough/simulate','{}');}
 function cgGtClear(){pj('/cough/clear_gt','{}').then(r=>r.json()).then(d=>{
   setText('cgGtCnt',d.count);
   setText('cgEvalTp','— / — / —');setText('cgEvalP','—');setText('cgEvalR','—');});}

@@ -271,6 +271,18 @@ static void event_push(uint32_t t_ms, uint8_t peaks, uint16_t dur, uint16_t amp)
     if (s_fire_count < COUGH_EVENT_RING_SIZE) s_fire_count++;
 }
 
+void cough_simulate(void)
+{
+    uint32_t now = millis();
+    event_push(now, s_min_peaks, 500, 80);
+    s_total_count++;
+    s_last_event_ms = now;
+    s_lockout_until = now + COUGH_LOCKOUT_MS;
+    s_cluster_peaks = 0;
+    s_cluster_max_amp = 0;
+    s_cluster_start_ms = 0;
+}
+
 void cough_feed_sample(int16_t x_mg, int16_t y_mg, int16_t z_mg)
 {
     /* 1) magnitude (mg). */

@@ -930,6 +930,12 @@ static void handle_cough_eval(void)
     http.sendHeader("Cache-Control", "no-store");
     http.send(200, "application/json", buf);
 }
+static void handle_cough_simulate(void)
+{
+    cough_simulate();
+    handle_cough_status();
+}
+
 static void handle_cough_cfg(void)
 {
     String body = http.arg("plain");
@@ -1192,6 +1198,7 @@ static void http_start(void)
     http.on("/cough/clear_gt",   HTTP_POST, handle_cough_clear_gt);
     http.on("/cough/eval",       HTTP_GET,  handle_cough_eval);
     http.on("/cough/cfg",        HTTP_POST, handle_cough_cfg);
+    http.on("/cough/simulate",   HTTP_POST, handle_cough_simulate);
     http.on("/slouch",           HTTP_GET,  handle_slouch_status);
     http.on("/slouch/calibrate", HTTP_POST, handle_slouch_calibrate);
     http.on("/slouch/reset",     HTTP_POST, handle_slouch_reset);

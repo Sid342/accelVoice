@@ -33,6 +33,10 @@ void     cough_clear_gt(void);
 size_t   cough_get_gt_count(void);
 void     cough_eval(uint16_t window_ms, uint16_t *tp, uint16_t *fp, uint16_t *fn);
 
+/* Manual fire — pushes a synthetic event for end-to-end UI validation
+ * on bench rigs where the 5–15 Hz band-pass kills desk-tap signals. */
+void     cough_simulate(void);
+
 /* Tunables. */
 void     cough_set_thresh_mg(uint16_t mg);
 uint16_t cough_get_thresh_mg(void);
