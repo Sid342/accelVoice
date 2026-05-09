@@ -29,7 +29,14 @@ typedef struct {
     uint16_t resp_min_interval_ms;
     uint16_t resp_iir_alpha_q15;
     int16_t  resp_min_amplitude_mg;
-    uint8_t  resp_axis;            /* 0=Z 1=X 2=Y */
+    uint8_t  resp_axis;            /* 0=Z 1=X 2=Y 3=PCA */
+    /* Respiration v3 — front-of-pipeline */
+    uint8_t  resp_median_len;          /* 1/3/5/7/9 (1=off) */
+    uint8_t  resp_bp_low_hz_x10;       /* 0..5 (0=off) */
+    uint8_t  resp_bp_high_hz_x10;      /* 0..12 (0=off) */
+    uint8_t  resp_hysteresis_mg;       /* 0..30 */
+    bool     resp_adaptive_bp;
+    uint8_t  resp_autocorr_window_sec; /* 10..60 */
     /* Calibration */
     int16_t  cal_x_mg;
     int16_t  cal_y_mg;

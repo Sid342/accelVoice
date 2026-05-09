@@ -33,6 +33,12 @@ static void load_defaults(void)
     s_cfg.resp_iir_alpha_q15     = RESP_IIR_ALPHA_Q15;
     s_cfg.resp_min_amplitude_mg  = RESP_MIN_AMPLITUDE_MG;
     s_cfg.resp_axis              = RESP_AXIS_DEFAULT;
+    s_cfg.resp_median_len           = RESP_MEDIAN_LEN_DEFAULT;
+    s_cfg.resp_bp_low_hz_x10        = RESP_BP_LOW_HZ_X10_DEFAULT;
+    s_cfg.resp_bp_high_hz_x10       = RESP_BP_HIGH_HZ_X10_DEFAULT;
+    s_cfg.resp_hysteresis_mg        = RESP_HYSTERESIS_MG_DEFAULT;
+    s_cfg.resp_adaptive_bp          = RESP_ADAPTIVE_BP_DEFAULT;
+    s_cfg.resp_autocorr_window_sec  = RESP_AUTOCORR_WIN_SEC_DEF;
     s_cfg.cal_x_mg         = 0;
     s_cfg.cal_y_mg         = 0;
     s_cfg.cal_z_mg         = 0;
@@ -64,6 +70,12 @@ void cfg_load(void)
     if (s_prefs.isKey("riir_a"))       s_cfg.resp_iir_alpha_q15   = s_prefs.getUShort("riir_a",   s_cfg.resp_iir_alpha_q15);
     if (s_prefs.isKey("rminamp"))      s_cfg.resp_min_amplitude_mg = s_prefs.getShort("rminamp",  s_cfg.resp_min_amplitude_mg);
     if (s_prefs.isKey("raxis"))        s_cfg.resp_axis            = s_prefs.getUChar("raxis",     s_cfg.resp_axis);
+    if (s_prefs.isKey("r_med"))        s_cfg.resp_median_len      = s_prefs.getUChar("r_med",     s_cfg.resp_median_len);
+    if (s_prefs.isKey("r_bp_lo"))      s_cfg.resp_bp_low_hz_x10   = s_prefs.getUChar("r_bp_lo",   s_cfg.resp_bp_low_hz_x10);
+    if (s_prefs.isKey("r_bp_hi"))      s_cfg.resp_bp_high_hz_x10  = s_prefs.getUChar("r_bp_hi",   s_cfg.resp_bp_high_hz_x10);
+    if (s_prefs.isKey("r_hyst"))       s_cfg.resp_hysteresis_mg   = s_prefs.getUChar("r_hyst",    s_cfg.resp_hysteresis_mg);
+    if (s_prefs.isKey("r_adp_bp"))     s_cfg.resp_adaptive_bp     = s_prefs.getBool("r_adp_bp",   s_cfg.resp_adaptive_bp);
+    if (s_prefs.isKey("r_ac_win"))     s_cfg.resp_autocorr_window_sec = s_prefs.getUChar("r_ac_win", s_cfg.resp_autocorr_window_sec);
     if (s_prefs.isKey("cal_x"))        s_cfg.cal_x_mg         = s_prefs.getShort("cal_x", 0);
     if (s_prefs.isKey("cal_y"))        s_cfg.cal_y_mg         = s_prefs.getShort("cal_y", 0);
     if (s_prefs.isKey("cal_z"))        s_cfg.cal_z_mg         = s_prefs.getShort("cal_z", 0);
@@ -95,6 +107,12 @@ void cfg_save(void)
     s_prefs.putUShort("riir_a",       s_cfg.resp_iir_alpha_q15);
     s_prefs.putShort("rminamp",       s_cfg.resp_min_amplitude_mg);
     s_prefs.putUChar("raxis",         s_cfg.resp_axis);
+    s_prefs.putUChar("r_med",         s_cfg.resp_median_len);
+    s_prefs.putUChar("r_bp_lo",       s_cfg.resp_bp_low_hz_x10);
+    s_prefs.putUChar("r_bp_hi",       s_cfg.resp_bp_high_hz_x10);
+    s_prefs.putUChar("r_hyst",        s_cfg.resp_hysteresis_mg);
+    s_prefs.putBool("r_adp_bp",       s_cfg.resp_adaptive_bp);
+    s_prefs.putUChar("r_ac_win",      s_cfg.resp_autocorr_window_sec);
     s_prefs.putShort("cal_x",         s_cfg.cal_x_mg);
     s_prefs.putShort("cal_y",         s_cfg.cal_y_mg);
     s_prefs.putShort("cal_z",         s_cfg.cal_z_mg);
@@ -125,4 +143,9 @@ void cfg_apply(void)
     resp_set_iir_alpha_q15(s_cfg.resp_iir_alpha_q15);
     resp_set_min_amplitude_mg(s_cfg.resp_min_amplitude_mg);
     resp_set_axis((resp_axis_t)s_cfg.resp_axis);
+    resp_set_median_len(s_cfg.resp_median_len);
+    resp_set_bp_cutoffs(s_cfg.resp_bp_low_hz_x10, s_cfg.resp_bp_high_hz_x10);
+    resp_set_hysteresis_mg(s_cfg.resp_hysteresis_mg);
+    resp_set_adaptive_bp(s_cfg.resp_adaptive_bp);
+    resp_set_autocorr_window_sec(s_cfg.resp_autocorr_window_sec);
 }

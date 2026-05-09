@@ -179,17 +179,31 @@ static void handle_data(void)
     http.send(200, "application/json", buf);
 }
 
-/* ── /data2 — extended diagnostic snapshot for v2 features ─────────────── */
+/* ── /data2 — extended diagnostic snapshot for v2/v3 features ──────────── */
 static void handle_data2(void)
 {
-    char buf[1024];
+    char buf[1536];
+    uint8_t pca_w[3] = {0,0,0};
+    resp_get_axis_weights_q8(pca_w);
+    const char *raxis_str =
+        (resp_get_axis() == RESP_AXIS_X)   ? "x" :
+        (resp_get_axis() == RESP_AXIS_Y)   ? "y" :
+        (resp_get_axis() == RESP_AXIS_PCA) ? "pca" : "z";
     snprintf(buf, sizeof(buf),
         "{\"wear\":{\"var\":%d,\"var_thr\":%u,\"grav\":%d,\"grav_thr\":%u,\"signal\":\"%s\"},"
         "\"resp\":{\"mean\":%d,\"instant_bpm\":%u,\"total_events\":%lu,"
                  "\"min_interval_ms\":%u,\"iir_alpha\":%u,"
                  "\"amplitude_mg\":%d,\"min_amplitude_mg\":%d,"
                  "\"axis\":\"%s\",\"phase\":\"%s\","
-                 "\"last_interval_ms\":%u,\"last_peak_ms\":%lu},"
+                 "\"last_interval_ms\":%u,\"last_peak_ms\":%lu,"
+                 "\"median_len\":%u,"
+                 "\"bp_low_hz_x10\":%u,\"bp_high_hz_x10\":%u,"
+                 "\"bp_low_active_x10\":%u,\"bp_high_active_x10\":%u,"
+                 "\"adaptive_bp\":%s,"
+                 "\"hysteresis_mg\":%u,"
+                 "\"pca_wx_q8\":%u,\"pca_wy_q8\":%u,\"pca_wz_q8\":%u,"
+                 "\"activity_mg2_x10\":%d,"
+                 "\"autocorr_window_sec\":%u},"
         "\"steps\":{\"signal\":%d,\"threshold\":%d,\"baseline\":%d,"
                   "\"total_events\":%lu,\"gt_count\":%u,"
                   "\"adaptive\":%s,\"bandpass\":%s,\"axis\":\"%s\","
@@ -201,11 +215,18 @@ static void handle_data2(void)
         (unsigned long)resp_total_events(),
         resp_get_min_interval_ms(), resp_get_iir_alpha_q15(),
         resp_current_amplitude_mg(), resp_get_min_amplitude_mg(),
-        (resp_get_axis() == RESP_AXIS_X) ? "x" :
-        (resp_get_axis() == RESP_AXIS_Y) ? "y" : "z",
+        raxis_str,
         (resp_current_phase() == RESP_PHASE_INHALE) ? "inhale" :
         (resp_current_phase() == RESP_PHASE_EXHALE) ? "exhale" : "flat",
         resp_last_interval_ms(), (unsigned long)resp_last_peak_ms(),
+        resp_get_median_len(),
+        resp_get_bp_low_hz_x10(), resp_get_bp_high_hz_x10(),
+        resp_get_active_bp_low_hz_x10(), resp_get_active_bp_high_hz_x10(),
+        resp_get_adaptive_bp() ? "true" : "false",
+        resp_get_hysteresis_mg(),
+        pca_w[0], pca_w[1], pca_w[2],
+        resp_current_activity_mg2_x10(),
+        resp_get_autocorr_window_sec(),
         steps_current_signal(), steps_current_threshold(),
         steps_current_baseline(),
         (unsigned long)steps_total_events(),
@@ -345,8 +366,12 @@ static void handle_resp_wave(void)
 /* ── /config GET + POST ─────────────────────────────────────────────────── */
 static void handle_config_get(void)
 {
-    char buf[640];
+    char buf[1024];
     cfg_t *c = cfg_get();
+    const char *raxis_str =
+        (c->resp_axis == 1) ? "x" :
+        (c->resp_axis == 2) ? "y" :
+        (c->resp_axis == 3) ? "pca" : "z";
     snprintf(buf, sizeof(buf),
              "{\"motion_thresh_mg\":%u,\"still_sec\":%u,\"offbody_sec\":%u,"
              "\"wear_var_thresh_mg\":%u,\"wear_grav_diff_thresh_mg\":%u,"
@@ -356,6 +381,10 @@ static void handle_config_get(void)
              "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
              "\"resp_min_interval_ms\":%u,\"resp_iir_alpha_q15\":%u,"
              "\"resp_min_amplitude_mg\":%d,\"resp_axis\":\"%s\","
+             "\"resp_median_len\":%u,"
+             "\"resp_bp_low_hz_x10\":%u,\"resp_bp_high_hz_x10\":%u,"
+             "\"resp_hysteresis_mg\":%u,\"resp_adaptive_bp\":%s,"
+             "\"resp_autocorr_window_sec\":%u,"
              "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}",
              c->motion_thresh_mg, c->still_sec, c->offbody_sec,
              c->wear_var_thresh_mg, c->wear_grav_diff_thresh_mg,
@@ -369,7 +398,12 @@ static void handle_config_get(void)
              c->bpm_min, c->bpm_max, c->resp_window_sec,
              c->resp_min_interval_ms, c->resp_iir_alpha_q15,
              c->resp_min_amplitude_mg,
-             (c->resp_axis == 1) ? "x" : (c->resp_axis == 2) ? "y" : "z",
+             raxis_str,
+             c->resp_median_len,
+             c->resp_bp_low_hz_x10, c->resp_bp_high_hz_x10,
+             c->resp_hysteresis_mg,
+             c->resp_adaptive_bp ? "true" : "false",
+             c->resp_autocorr_window_sec,
              c->cal_x_mg, c->cal_y_mg, c->cal_z_mg);
     http.send(200, "application/json", buf);
 }
@@ -425,9 +459,25 @@ static void handle_config_post(void)
     if (v >= 0 && v <= 500) c->resp_min_amplitude_mg = (int16_t)v;
     {
         String ax = kv_str(body, "resp_axis");
-        if      (ax == "x") c->resp_axis = 1;
-        else if (ax == "y") c->resp_axis = 2;
-        else if (ax == "z") c->resp_axis = 0;
+        if      (ax == "x")   c->resp_axis = 1;
+        else if (ax == "y")   c->resp_axis = 2;
+        else if (ax == "z")   c->resp_axis = 0;
+        else if (ax == "pca") c->resp_axis = 3;
+    }
+    v = kv_int(body, "resp_median_len", -1);
+    if (v == 1 || v == 3 || v == 5 || v == 7 || v == 9) c->resp_median_len = (uint8_t)v;
+    {
+        int lo = kv_int(body, "resp_bp_low_hz_x10",  -1);
+        int hi = kv_int(body, "resp_bp_high_hz_x10", -1);
+        if (lo >= 0 && lo <= 5)  c->resp_bp_low_hz_x10  = (uint8_t)lo;
+        if (hi >= 0 && hi <= 12) c->resp_bp_high_hz_x10 = (uint8_t)hi;
+    }
+    v = kv_int(body, "resp_hysteresis_mg", -1);
+    if (v >= 0 && v <= 30) c->resp_hysteresis_mg = (uint8_t)v;
+    {
+        String pat = "\"resp_adaptive_bp\"";
+        if (body.indexOf(pat) >= 0)
+            c->resp_adaptive_bp = kv_bool(body, "resp_adaptive_bp", c->resp_adaptive_bp);
     }
     cfg_apply();
     cfg_save();

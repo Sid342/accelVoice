@@ -32,9 +32,23 @@
 #define RESP_MIN_INTERVAL_MS    1500  /* min ms between peaks (40 BPM ceiling)  */
 #define RESP_IIR_ALPHA_Q15      1638  /* mean tracker α ≈ 0.05 (≈ 4 s eff window) */
 #define RESP_MIN_AMPLITUDE_MG   10    /* peak-to-peak amplitude gate (filters noise) */
-#define RESP_AXIS_DEFAULT       0     /* 0=Z 1=X 2=Y                             */
+#define RESP_AXIS_DEFAULT       3     /* 0=Z 1=X 2=Y 3=PCA-lite (v3 default)     */
 #define RESP_EVENT_RING_SIZE    64
 #define RESP_WAVE_RING_SIZE     300   /* 12 s @ 25 Hz of (axis, mean) pairs     */
+
+/* ── Respiration v3 (median + Butterworth + PCA-lite + autocorr) ─────────── */
+#define RESP_MEDIAN_LEN_DEFAULT     5   /* 1/3/5/7/9 (1 = off)                  */
+#define RESP_MEDIAN_RING_LEN        9   /* must hold the largest allowed N      */
+#define RESP_BP_LOW_HZ_X10_DEFAULT  1   /* 0.1 Hz HPF (0 = off)                 */
+#define RESP_BP_HIGH_HZ_X10_DEFAULT 8   /* 0.8 Hz LPF (0 = off)                 */
+#define RESP_HYSTERESIS_MG_DEFAULT  0   /* 0 = legacy zero-cross rearm          */
+#define RESP_ADAPTIVE_BP_DEFAULT    false
+#define RESP_AUTOCORR_WIN_SEC_DEF   30  /* 10..60 s; 30 s × 25 Hz = 750 samples */
+#define RESP_AUTOCORR_PERIOD_MS     5000  /* run every 5 s                      */
+#define RESP_AUTOCORR_RING_MAX_SEC  60    /* worst-case ring length             */
+#define RESP_PCA_TAU_ALPHA_Q15      328   /* α ≈ 0.01 → ~4 s effective window   */
+#define RESP_ACTIVITY_LO_MG2        50    /* sitting/resting                    */
+#define RESP_ACTIVITY_HI_MG2        500   /* running threshold                  */
 
 /* ── Step counter ─────────────────────────────────────────────────────────── */
 #define STEP_PEAK_THRESH_MG     200   /* mg above gravity baseline              */
