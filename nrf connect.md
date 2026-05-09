@@ -48,6 +48,28 @@ design is a rig-only shortcut.
 | `ble_find` advertise | already BLE-native | trivial |
 | `voice.cpp` DSP (DC blocker + noise gate) | port byte-for-byte | pure C, no platform deps |
 
+## Phase 2.5 portability notes
+
+**ODR is now 100 Hz on the bench**, not 25 Hz. Cough (and the upcoming
+Fall) detector consumes the full rate; resp/steps/wear are decimated 1-in-4
+to keep their 25 Hz calibration. On LIS2DW12 set `CTRL1.ODR = 0x4`
+(100 Hz, low-power mode 1) and the high-performance bit cleared. Power
+cost is negligible at LP1.
+
+**Cough detector** (`firmware/cough.cpp`) is pure software (one slow IIR
+mean tracker, two biquads, one envelope LPF, peak + cluster gate). Ports
+verbatim to LIS2DW12. Constants port unchanged because both sensors
+report mg. Cluster window and threshold are the only field-tuneables.
+
+**Mode AUTO** — production default. AUTO follows wear; NORMAL/TURBO are
+bench/lab modes that ignore the wear sensor and always run the ionizer
+(respecting OFF + battery). AUTO is what production firmware should
+boot to; NORMAL/TURBO are accessible only via debug BLE write.
+
+**No gyro features.** LIS2DW12 has no gyro. None of the Phase-2.5
+algorithms (cough, slouch, fall) use gyro signal. Anything labelled
+"gyro" in the algorithm doc is intentionally absent.
+
 ## Audio path
 
 The DSP block from `voice.cpp` (gain shift → DC blocker IIR → noise gate →

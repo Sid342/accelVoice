@@ -71,6 +71,22 @@
 #define STEP_GT_RING_SIZE       128
 #define STEP_AMP_BUF_MAX        128   /* covers up to 5120 ms @ 25 Hz           */
 
+/* ── Cough detection (5–15 Hz envelope cluster) ───────────────────────────── */
+#define COUGH_THRESH_MG_DEFAULT     80    /* envelope rising threshold, mg     */
+#define COUGH_CLUSTER_MS_DEFAULT    800   /* peaks within window form cluster  */
+#define COUGH_MIN_PEAKS_DEFAULT     3     /* peaks needed to fire event        */
+#define COUGH_LOCKOUT_MS            1500  /* after fire, ignore further peaks  */
+#define COUGH_BP_LOW_HZ             5     /* band-pass low cutoff (Hz)         */
+#define COUGH_BP_HIGH_HZ            15    /* band-pass high cutoff (Hz)        */
+#define COUGH_PEAK_MIN_INTERVAL_MS  100   /* min spacing between peaks         */
+#define COUGH_EVENT_RING_SIZE       32    /* recent events                     */
+#define COUGH_GT_RING_SIZE          64    /* ground-truth taps                 */
+#define COUGH_RATE_WINDOW_MS        60000 /* rolling per-min window            */
+#define COUGH_WAVE_RING_SIZE        100   /* /cough/wave ring (10 s @ 10 Hz)   */
+#define COUGH_WAVE_DECIM            10    /* push 1-in-N envelope samples      */
+#define COUGH_AC_ALPHA_Q15          655   /* slow mean IIR α≈0.02 (~2 s @100Hz)*/
+#define COUGH_ENV_ALPHA_Q15         3277  /* envelope LPF α≈0.1 (~100 ms)      */
+
 /* ── Serial / Telemetry ───────────────────────────────────────────────────── */
 #define SERIAL_BAUD             115200
 #define TELEMETRY_PERIOD_MS     100   /* 10 Hz CSV-style live stream            */

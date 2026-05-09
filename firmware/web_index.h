@@ -117,6 +117,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <button data-tab="device">Device</button>
     <button data-tab="breath">Breath</button>
     <button data-tab="step">Step</button>
+    <button data-tab="cough">Cough</button>
     <button data-tab="tune">Tune</button>
     <button data-tab="system">System</button>
     <button data-tab="network">Network</button>
@@ -332,6 +333,64 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <table id="stepTable" style="width:100%;border-collapse:collapse;font-size:13px">
       <thead><tr style="text-align:left;color:#94a3b8"><th style="padding:6px 0">#</th><th>Age</th><th>Interval</th><th>Amplitude</th><th>Cadence</th></tr></thead>
       <tbody id="stepTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ─────────────── COUGH ─────────────── -->
+<div class="tab" id="tab-cough">
+  <div class="section">
+    <h2>Cough — 5–15 Hz envelope cluster detector</h2>
+    <div class="cards">
+      <div class="card"><div class="lbl">Total</div><div id="cgTot" class="val">0</div><div class="sub">since boot</div></div>
+      <div class="card"><div class="lbl">Per minute</div><div id="cgRate" class="val">0</div><div class="sub">rolling 60 s</div></div>
+      <div class="card"><div class="lbl">Last cough</div><div id="cgAge" class="val">—</div><div class="sub" id="cgAgeSub">—</div></div>
+      <div class="card"><div class="lbl">Detector</div><div id="cgState" class="val off">IDLE</div><div class="sub" id="cgStateSub">env 0 mg · cluster 0</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Envelope <span class="hint">— last 10 s of band-pass envelope (mg)</span></h2>
+    <canvas id="cgWave" width="900" height="220"></canvas>
+  </div>
+
+  <div class="section">
+    <h2>Tunables</h2>
+    <div class="row"><label>Threshold</label>
+      <input type="range" id="cgThr" min="40" max="200" step="5" value="80">
+      <span id="cgThrV" class="num">80 mg</span></div>
+    <div class="row"><label>Cluster window</label>
+      <input type="range" id="cgCwin" min="400" max="1500" step="50" value="800">
+      <span id="cgCwinV" class="num">800 ms</span></div>
+    <div class="row"><label>Min peaks</label>
+      <input type="range" id="cgMp" min="2" max="6" step="1" value="3">
+      <span id="cgMpV" class="num">3</span></div>
+    <div class="note">Threshold ≈ envelope rising edge in mg. Cluster window groups peaks. Min peaks fires the event. After fire: 1.5 s lockout.</div>
+  </div>
+
+  <div class="section">
+    <h2>Ground truth</h2>
+    <div class="actions">
+      <button class="btn act" onclick="cgGt()">I just coughed</button>
+      <button class="btn warn" onclick="cgGtClear()">Clear taps</button>
+      <button class="btn primary" onclick="cgEval()">Evaluate (±1500 ms)</button>
+    </div>
+    <div class="note" style="margin-top:8px">Tap once per real cough. Then evaluate to get TP/FP/FN.</div>
+    <div class="kv" style="margin-top:8px">
+      <dt>GT taps</dt><dd id="cgGtCnt">0</dd>
+      <dt>TP / FP / FN</dt><dd id="cgEvalTp">— / — / —</dd>
+      <dt>Precision</dt><dd id="cgEvalP">—</dd>
+      <dt>Recall</dt><dd id="cgEvalR">—</dd>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Recent events</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;color:var(--dim)">
+        <th>#</th><th>Age</th><th>Peaks</th><th>Duration</th><th>Peak amp</th>
+      </tr></thead>
+      <tbody id="cgTblBody"></tbody>
     </table>
   </div>
 </div>
@@ -631,7 +690,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 <script>
 /* ── Tab switching ───────────────────────────────────────────────────────── */
-const TABS=['live','device','breath','step','tune','system','network','find','voice'];
+const TABS=['live','device','breath','step','cough','tune','system','network','find','voice'];
 function showTab(name){
   TABS.forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===name);
@@ -642,6 +701,7 @@ function showTab(name){
   if(name==='voice'){fetchVoice();fetchStt();}
   if(name==='breath'){drawRespWave();}
   if(name==='step'){drawStepTrace();}
+  if(name==='cough'){tickCough();}
 }
 document.querySelectorAll('#tabnav button').forEach(b=>{
   b.addEventListener('click',()=>showTab(b.dataset.tab));
@@ -1320,6 +1380,119 @@ function sttRun(){
   }).catch(e=>{document.getElementById('sttErr').textContent='request failed: '+e;})
     .finally(()=>{btn.disabled=false;btn.textContent='Transcribe last.wav';});
 }
+
+/* ── Cough tab ───────────────────────────────────────────────────────────── */
+let cgRecent=[];
+let cgLastTotal=0;
+function fmtAgeShort(ms){
+  if(ms<=0||!isFinite(ms))return '—';
+  if(ms<1000)return ms+' ms';
+  const s=ms/1000;if(s<60)return s.toFixed(1)+' s';
+  return (s/60).toFixed(1)+' min';
+}
+async function tickCough(){
+  if(!document.getElementById('tab-cough').classList.contains('active'))return;
+  try{
+    const [s,w,e]=await Promise.all([
+      fetch('/cough',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/cough/wave',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/cough/events?since=0',{cache:'no-store'}).then(r=>r.json()),
+    ]);
+    setText('cgTot', s.total);
+    setText('cgRate', s.per_min);
+    setText('cgAge', s.last_age_ms? fmtAgeShort(s.last_age_ms) : '—');
+    setText('cgAgeSub', s.total? 'since last fire' : '—');
+    const env=s.env_mg||0, cluster=s.cluster_peaks||0;
+    let stName='IDLE', stCls='off';
+    if(s.last_age_ms&&s.last_age_ms<2000){stName='FIRED';stCls='on';}
+    else if(cluster>0){stName='CLUSTER';stCls='warn';}
+    else if(env>(s.thresh_mg||0)*0.5){stName='ACTIVE';stCls='warn';}
+    const stEl=document.getElementById('cgState');
+    stEl.textContent=stName;stEl.className='val '+stCls;
+    setText('cgStateSub','env '+env+' mg · cluster '+cluster+' peaks');
+    setText('cgGtCnt', s.gt_count||0);
+    if(Date.now()>suppressUntil){
+      setSlider('cgThr', s.thresh_mg, 'mg');
+      setSlider('cgCwin', s.cluster_window_ms, 'ms');
+      setSlider('cgMp', s.min_peaks, '');
+    }
+    /* draw envelope */
+    const cv=document.getElementById('cgWave');
+    if(cv&&w.env){
+      const ctx=cv.getContext('2d');const W=cv.width,H=cv.height;
+      ctx.clearRect(0,0,W,H);ctx.fillStyle='#0e1116';ctx.fillRect(0,0,W,H);
+      let mn=0,mx=Math.max(s.thresh_mg*1.5||120, ...w.env);
+      if(mx<60)mx=60;
+      const pad=8;const yScale=(H-2*pad)/(mx-mn);
+      /* threshold line */
+      ctx.strokeStyle='#e58383';ctx.setLineDash([4,4]);ctx.lineWidth=1;
+      const yT=H-pad-(s.thresh_mg-mn)*yScale;
+      ctx.beginPath();ctx.moveTo(0,yT);ctx.lineTo(W,yT);ctx.stroke();ctx.setLineDash([]);
+      /* envelope */
+      ctx.strokeStyle='#5aa9ff';ctx.lineWidth=1.8;ctx.beginPath();
+      const xs=W/Math.max(1,w.env.length-1);
+      for(let i=0;i<w.env.length;i++){
+        const x=i*xs;const y=H-pad-(w.env[i]-mn)*yScale;
+        if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+      /* axis labels */
+      ctx.fillStyle='#64748b';ctx.font='11px monospace';
+      ctx.fillText(mx.toFixed(0)+' mg',6,12);ctx.fillText('thr '+s.thresh_mg+' mg',W-86,yT-4);
+      /* tick markers if event recently fired */
+      if(s.last_age_ms&&s.last_age_ms<10000){
+        const winMs=(w.env.length-1)*(w.period_ms||100);
+        const x=W*(1-(s.last_age_ms/winMs));
+        if(x>0&&x<W){
+          ctx.strokeStyle='#5fdc7a';ctx.lineWidth=2;
+          ctx.beginPath();ctx.moveTo(x,2);ctx.lineTo(x,H-2);ctx.stroke();
+        }
+      }
+    }
+    /* event table */
+    if(e.events){
+      cgRecent=e.events.slice(-12);
+      const tb=document.getElementById('cgTblBody');
+      const now=Date.now()-(e.now-cgRecent[cgRecent.length-1]?.t||0);
+      const rows=cgRecent.slice().reverse().map((ev,i)=>{
+        const age=fmtAgeShort(e.now-ev.t);
+        return '<tr style="border-top:1px solid #334155">'
+          +'<td style="padding:4px 0">'+(cgRecent.length-i)+'</td>'
+          +'<td>'+age+'</td>'
+          +'<td>'+ev.peaks+'</td>'
+          +'<td>'+ev.dur+' ms</td>'
+          +'<td>'+ev.amp+' mg</td>'
+          +'</tr>';
+      }).join('');
+      tb.innerHTML=rows||'<tr><td colspan="5" style="padding:6px 0;color:#94a3b8">no coughs yet</td></tr>';
+    }
+  }catch(err){}
+}
+setInterval(tickCough,500);
+function cgGt(){pj('/cough/gt','{}').then(r=>r.json()).then(d=>{setText('cgGtCnt',d.count);});}
+function cgGtClear(){pj('/cough/clear_gt','{}').then(r=>r.json()).then(d=>{
+  setText('cgGtCnt',d.count);
+  setText('cgEvalTp','— / — / —');setText('cgEvalP','—');setText('cgEvalR','—');});}
+function cgEval(){
+  fetch('/cough/eval?window_ms=1500',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+    setText('cgEvalTp', d.tp+' / '+d.fp+' / '+d.fn);
+    setText('cgEvalP', d.precision_pct+' %');
+    setText('cgEvalR', d.recall_pct+' %');
+  });}
+['cgThr','cgCwin','cgMp'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener('input',()=>{
+    suppress();
+    const unit=id==='cgThr'?'mg':(id==='cgCwin'?'ms':'');
+    document.getElementById(id+'V').textContent=el.value+(unit?' '+unit:'');
+    clearTimeout(el._t);
+    const body={};
+    if(id==='cgThr')  body.thresh_mg=+el.value;
+    if(id==='cgCwin') body.cluster_window_ms=+el.value;
+    if(id==='cgMp')   body.min_peaks=+el.value;
+    el._t=setTimeout(()=>pj('/cough/cfg',JSON.stringify(body)),200);
+  });
+});
 
 /* ── Motion log @ 1 Hz ───────────────────────────────────────────────────── */
 async function mtick(){

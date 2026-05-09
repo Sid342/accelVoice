@@ -40,6 +40,7 @@
 #include "ble_find.h"
 #include "voice.h"
 #include "stt.h"
+#include "cough.h"
 #include "web_index.h"
 #include <SPIFFS.h>
 
@@ -828,6 +829,108 @@ static void handle_stt_run(void)
     handle_stt_status();
 }
 
+/* ── /cough/* ──────────────────────────────────────────────────────────── */
+static void handle_cough_status(void)
+{
+    char buf[260];
+    uint32_t le = cough_last_event_ms();
+    uint32_t age = (le == 0) ? 0 : (millis() - le);
+    snprintf(buf, sizeof(buf),
+             "{\"total\":%lu,\"per_min\":%u,\"last_age_ms\":%lu,"
+              "\"env_mg\":%d,\"cluster_peaks\":%u,"
+              "\"thresh_mg\":%u,\"cluster_window_ms\":%u,\"min_peaks\":%u,"
+              "\"gt_count\":%u}",
+             (unsigned long)cough_total(), cough_rate_per_min(),
+             (unsigned long)age,
+             cough_current_envelope_mg(), cough_current_cluster_count(),
+             cough_get_thresh_mg(), cough_get_cluster_window_ms(),
+             cough_get_min_peaks(),
+             (unsigned)cough_get_gt_count());
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
+}
+static void handle_cough_events(void)
+{
+    String s = http.arg("since");
+    uint32_t since = (uint32_t)s.toInt();
+    cough_event_t evts[16];
+    size_t n = cough_get_events_since(since, evts, sizeof(evts)/sizeof(evts[0]));
+    String body;
+    body.reserve(96 + n * 56);
+    body  = "{\"now\":";    body += (uint32_t)millis();
+    body += ",\"total\":";  body += (uint32_t)cough_total();
+    body += ",\"events\":[";
+    for (size_t i = 0; i < n; i++) {
+        if (i) body += ',';
+        body += "{\"t\":";      body += (uint32_t)evts[i].t_ms;
+        body += ",\"peaks\":";  body += (uint32_t)evts[i].peak_count;
+        body += ",\"dur\":";    body += (uint32_t)evts[i].duration_ms;
+        body += ",\"amp\":";    body += (uint32_t)evts[i].peak_amplitude_mg;
+        body += '}';
+    }
+    body += "]}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
+}
+static void handle_cough_wave(void)
+{
+    static int16_t buf[100];
+    size_t got = cough_get_wave(buf, sizeof(buf)/sizeof(buf[0]));
+    String body;
+    body.reserve(64 + got * 6);
+    body  = "{\"n\":";        body += (uint32_t)got;
+    body += ",\"period_ms\":";body += (uint32_t)cough_wave_period_ms();
+    body += ",\"thresh_mg\":";body += (uint32_t)cough_get_thresh_mg();
+    body += ",\"env\":[";
+    for (size_t i = 0; i < got; i++) { if (i) body += ','; body += (int32_t)buf[i]; }
+    body += "]}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
+}
+static void handle_cough_gt_post(void)
+{
+    cough_add_gt(millis());
+    char buf[40];
+    snprintf(buf, sizeof(buf), "{\"count\":%u}", (unsigned)cough_get_gt_count());
+    http.send(200, "application/json", buf);
+}
+static void handle_cough_clear_gt(void)
+{
+    cough_clear_gt();
+    http.send(200, "application/json", "{\"count\":0}");
+}
+static void handle_cough_eval(void)
+{
+    int win = http.hasArg("window_ms") ? http.arg("window_ms").toInt() : 1500;
+    if (win < 200)  win = 200;
+    if (win > 5000) win = 5000;
+    uint16_t tp=0, fp=0, fn=0;
+    cough_eval((uint16_t)win, &tp, &fp, &fn);
+    uint16_t prec   = (tp + fp) ? (uint16_t)((tp * 100UL) / (tp + fp)) : 0;
+    uint16_t recall = (tp + fn) ? (uint16_t)((tp * 100UL) / (tp + fn)) : 0;
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             "{\"window_ms\":%d,\"tp\":%u,\"fp\":%u,\"fn\":%u,"
+              "\"precision_pct\":%u,\"recall_pct\":%u}",
+             win, tp, fp, fn, prec, recall);
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
+}
+static void handle_cough_cfg(void)
+{
+    String body = http.arg("plain");
+    cfg_t *c = cfg_get();
+    int v;
+    v = kv_int(body, "thresh_mg", -1);
+    if (v >= 10 && v <= 1000) { c->cough_thresh_mg = v; cough_set_thresh_mg(v); }
+    v = kv_int(body, "cluster_window_ms", -1);
+    if (v >= 200 && v <= 3000) { c->cough_cluster_ms = v; cough_set_cluster_window_ms(v); }
+    v = kv_int(body, "min_peaks", -1);
+    if (v >= 1 && v <= 8) { c->cough_min_peaks = (uint8_t)v; cough_set_min_peaks((uint8_t)v); }
+    cfg_save();
+    handle_cough_status();
+}
+
 /* ── /find (start), /find/stop ─────────────────────────────────────────── */
 static void handle_find_post(void)
 {
@@ -931,6 +1034,13 @@ static void http_start(void)
     http.on("/stt/status",       HTTP_GET,  handle_stt_status);
     http.on("/stt/key",          HTTP_POST, handle_stt_key);
     http.on("/stt/run",          HTTP_POST, handle_stt_run);
+    http.on("/cough",            HTTP_GET,  handle_cough_status);
+    http.on("/cough/events",     HTTP_GET,  handle_cough_events);
+    http.on("/cough/wave",       HTTP_GET,  handle_cough_wave);
+    http.on("/cough/gt",         HTTP_POST, handle_cough_gt_post);
+    http.on("/cough/clear_gt",   HTTP_POST, handle_cough_clear_gt);
+    http.on("/cough/eval",       HTTP_GET,  handle_cough_eval);
+    http.on("/cough/cfg",        HTTP_POST, handle_cough_cfg);
     http.onNotFound(handle_404);
     http.begin();
     Serial.print(F("[http] listening on :")); Serial.println(WIFI_HTTP_PORT);
@@ -964,6 +1074,7 @@ void setup(void)
     find_init();
     voice_init();
     stt_init();
+    cough_init();
     /* mode is already restored from NVS via cfg_apply() above. */
     battsim_set(80, false, false);
 
@@ -1006,7 +1117,12 @@ void loop(void)
         accel_read_mg(&last_x_mg, &last_y_mg, &last_z_mg);
         last_mag_mg = mag_mg(last_x_mg, last_y_mg, last_z_mg);
 
-        /* 100 Hz consumers (cough, fall) hook here in commits 2 & 4. */
+        /* 100 Hz consumers — cough only fires when on-body (talking +
+         * vibration false-positives off-wrist are out of scope). Fall lands
+         * in commit 4 and runs unconditionally. */
+        if (wear_get_state() == WEAR_STATE_ON_BODY) {
+            cough_feed_sample(last_x_mg, last_y_mg, last_z_mg);
+        }
 
         /* 25 Hz consumers — wear v2 / resp / steps decimated 1-in-4. */
         if (s_decim_n == 0) {

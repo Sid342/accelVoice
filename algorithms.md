@@ -7,17 +7,38 @@ where the logic is known to be weak. Read `app.md` for the HTTP shape and
 `nrf connect.md` for the port plan; the same constants port to nRF directly.
 
 All units are **mg** (1 mg = 1/1000 of 1 g; gravity ≈ 1000 mg) unless noted.
-ODR is **25 Hz** (one sample every 40 ms).
+The **sample loop ODR is 100 Hz** (Phase 2.5 bump). The 25 Hz consumers
+(wear, respiration, steps) are fed via 1-in-4 decimation. The 100 Hz path
+is consumed by **cough** (and **fall** in commit 4).
 
 ## Index
 
-1. [Wear detection](#wear-detection)
-2. [Respiration BPM](#respiration-bpm)
-3. [Step counting](#step-counting)
-4. [Voice DSP](#voice-dsp)
-5. [Tunables — full table by subsystem](#tunables--full-table-by-subsystem)
-6. [Persistence map (NVS)](#persistence-map-nvs)
-7. [Glossary](#glossary)
+1. [Device modes (OFF / NORMAL / TURBO / AUTO)](#device-modes)
+2. [Wear detection](#wear-detection)
+3. [Respiration BPM](#respiration-bpm)
+4. [Step counting](#step-counting)
+5. [Cough detection](#cough-detection)
+6. [Voice DSP](#voice-dsp)
+7. [Tunables — full table by subsystem](#tunables--full-table-by-subsystem)
+8. [Persistence map (NVS)](#persistence-map-nvs)
+9. [Glossary](#glossary)
+
+---
+
+## Device modes
+
+`firmware/mode.cpp` exposes four modes that gate the ionizer behaviour:
+
+| Mode | Ionizer rule | Use |
+|---|---|---|
+| `OFF` | always off (overrides everything except battery) | manual disable |
+| `NORMAL` | always on, ignoring wear (respects OFF + battery) | bench / lab |
+| `TURBO` | same as NORMAL; flagged as boosted upstream | high-output session |
+| `AUTO` | follows wear: on-body=on, off-body=off | production default |
+
+Master gates apply to every mode: `OFF` short-circuits to false, and a
+battery override (`battsim_overrides_ionizer()`) forces false regardless of
+mode. Mode is persisted in NVS under key `app_mode`; new devices boot AUTO.
 
 ---
 
@@ -380,6 +401,82 @@ it as a deliberate next move.
 
 ---
 
+## Cough detection
+
+Source: `firmware/cough.cpp`. Pipeline runs at the full **100 Hz** sample
+rate.
+
+### Pipeline
+
+```
+mag = √(x² + y² + z²)
+ac  = mag − slow_IIR_mean(mag, α=0.02)         # ~2 s mean tracker
+bp  = biquad_HPF(5 Hz) → biquad_LPF(15 Hz)     # 2nd-order Butterworth pair
+env = α=0.1 LPF of |bp|                        # ~100 ms envelope
+peak: rising edge of env across thresh_mg, ≥ 100 ms since last peak
+cluster: ≥ min_peaks peaks within cluster_window_ms → fire event
+post-fire lockout: 1500 ms
+```
+
+### Why this band
+
+A cough's mechanical signature on a wrist accelerometer is a brief 80–200 ms
+burst that sits centered around 8–12 Hz. The 5 Hz HPF kills slow body
+motion (gait, breath, postural sway) and the 15 Hz LPF kills sensor noise
+and electrical pickup. The envelope LPF averages the rectified energy so a
+single 200 ms burst becomes a single rounded peak.
+
+### Cluster gate
+
+A real cough often produces 2–4 sharp pulses in quick succession (initial
+glottal closure + reflex bursts). Requiring ≥ `min_peaks` (default 3)
+within `cluster_window_ms` (default 800) inside the envelope rejects most
+single-shock false positives (door slam, table thump, button press).
+
+The post-fire lockout (1.5 s) prevents one prolonged cough from firing
+twice.
+
+### Ground-truth eval
+
+`POST /cough/gt` records a tap timestamp. `GET /cough/eval?window_ms=1500`
+runs greedy nearest-match: each GT tap claims the nearest unmatched
+detection within ±window_ms; unmatched detections become FP, unmatched
+GT become FN. Returns `{tp, fp, fn, precision_pct, recall_pct}`.
+Matches the pattern used by `steps_eval()`.
+
+### Known limitations
+
+- **Talking** can produce envelope peaks if the user is gesturing
+  vigorously (false positives). Mitigation: bump `min_peaks` to 4 in
+  conversational contexts.
+- **Phone vibration** held against the wrist looks identical to a cough on
+  a wrist accel. Out of scope to discriminate.
+- **Single sharp coughs** (one big pulse, no reflex bursts) require
+  `min_peaks=2` to be detected.
+- **Off-wrist activity** is ignored: the firmware feeds samples to
+  `cough_feed_sample` only when `wear_get_state() == ON_BODY`.
+
+### Cough tunables
+
+| Param | Default | Range | Unit | Persists | NVS key |
+|---|---:|---|---|---|---|
+| `cough_thresh_mg` | 80 | 10–1000 | mg | yes | `c_thr` |
+| `cough_cluster_ms` | 800 | 200–3000 | ms | yes | `c_cwin` |
+| `cough_min_peaks` | 3 | 1–8 | count | yes | `c_mp` |
+
+Compile-time:
+
+| Constant | Value | Notes |
+|---|---:|---|
+| `COUGH_BP_LOW_HZ` | 5 | band-pass low cutoff |
+| `COUGH_BP_HIGH_HZ` | 15 | band-pass high cutoff |
+| `COUGH_PEAK_MIN_INTERVAL_MS` | 100 | min spacing between peaks |
+| `COUGH_LOCKOUT_MS` | 1500 | post-fire silence |
+| `COUGH_AC_ALPHA_Q15` | 655 | AC mean tracker (~2 s) |
+| `COUGH_ENV_ALPHA_Q15` | 3277 | envelope LPF (~100 ms) |
+
+---
+
 ## Voice DSP
 
 Source: `firmware/voice.cpp`. Runs after each I²S DMA buffer (≈10 ms) before
@@ -504,6 +601,20 @@ constants are listed for reference but cannot be changed without re-flashing.
 | `resp_hysteresis_mg` | 0 | 0–30 | mg | yes | `cfg` |
 | `resp_adaptive_bp` | false | bool | — | yes | `cfg` |
 | `resp_autocorr_window_sec` | 30 | 10–60 | s | yes | `cfg` |
+
+### Cough
+
+| Param | Default | Range | Unit | Persists | NVS namespace |
+|---|---:|---|---|---|---|
+| `cough_thresh_mg` | 80 | 10–1000 | mg | yes | `cfg` |
+| `cough_cluster_ms` | 800 | 200–3000 | ms | yes | `cfg` |
+| `cough_min_peaks` | 3 | 1–8 | count | yes | `cfg` |
+
+### Mode
+
+| Param | Default | Range | Persists | NVS namespace |
+|---|---:|---|---|---|
+| `mode` | `auto` | off/normal/turbo/auto | yes | `cfg` |
 
 ### Voice
 

@@ -47,6 +47,10 @@ typedef struct {
     bool     wifi_sta_enabled;
     /* App mode (persisted across boots) */
     uint8_t  mode;                     /* app_mode_t cast; default APP_MODE_AUTO */
+    /* Cough detection */
+    uint16_t cough_thresh_mg;
+    uint16_t cough_cluster_ms;
+    uint8_t  cough_min_peaks;
 } cfg_t;
 
 void   cfg_load(void);

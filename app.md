@@ -8,9 +8,13 @@ TLS — because this device only ever lives on the bench network.
 
 | Tab | What it shows |
 |---|---|
-| **Live** | wear state, accel x/y/z + magnitude, BPM, steps, ionizer state, battery, multi-axis plot |
-| **Tune** | sliders for every wear / step / respiration threshold; calibrate accel; reset steps & resp; force wear |
-| **System** | uptime, free heap, SPIFFS, mode override (OFF/NORMAL/TURBO), battery sim, settings export/import |
+| **Live** | wear state, accel x/y/z + magnitude, BPM, steps, ionizer state, battery, multi-axis plot, Phase-2.5 cards |
+| **Device** | mode (OFF/NORMAL/TURBO/AUTO) buttons, wear override, battery sim, ionizer status |
+| **Breath** | resp waveform + recent breaths + tunables |
+| **Step** | step trace + ground-truth eval + recent steps |
+| **Cough** | envelope plot, threshold/cluster/min-peaks sliders, GT taps + precision/recall |
+| **Tune** | sliders for every wear / step / resp threshold; calibrate accel; reset steps & resp; force wear |
+| **System** | hostname, AP/STA IP, RSSI, uptime, build/heap/chip, reboot, settings export |
 | **Network** | AP info, STA join form (SSID/pass), mDNS hostname, OTA status |
 | **Find** | "find my device" 30 s LED strobe, BLE advertise on-demand for phone find |
 | **Voice** | record, VAD, gain/timeout/silence sliders, DC blocker, noise gate, WAV download/play, **Cloud STT** |
@@ -33,7 +37,7 @@ TLS — because this device only ever lives on the bench network.
 | GET | `/steps/eval` | `?window_sec=&tol_ms=` | `{detected,groundtruth,matched,precision_pct,recall_pct}` |
 | GET | `/config` | — | tunable thresholds JSON |
 | POST | `/config` | tunables JSON | applies + persists, returns same shape |
-| POST | `/mode` | `{"mode":"off|normal|turbo"}` | new mode |
+| POST | `/mode` | `{"mode":"off|normal|turbo|auto"}` | new mode (persisted) |
 | POST | `/wear/force` | `{"force":"auto|on|off"}` | new force state |
 | POST | `/steps/reset` | `{}` | `{"steps":0}` |
 | POST | `/resp/reset` | `{}` | `{"reset":true}` |
@@ -76,6 +80,18 @@ init eagerly.
 | POST | `/voice/config` | `{vad_threshold,silence_ms,timeout_ms,gain_shift,noise_gate,dc_blocker}` | applies, returns status |
 | GET | `/voice/last.wav` | — | streams WAV file (`audio/wav`, attachment) |
 
+### Phase 2.5 — Cough
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/cough` | — | `{total, per_min, last_age_ms, env_mg, cluster_peaks, thresh_mg, cluster_window_ms, min_peaks, gt_count}` |
+| GET | `/cough/events` | `?since=<ms>` | `{now, total, events:[{t,peaks,dur,amp}…]}` |
+| GET | `/cough/wave` | — | `{n, period_ms, thresh_mg, env:[…]}` (envelope ring) |
+| POST | `/cough/gt` | `{}` | record a tap, returns `{count}` |
+| POST | `/cough/clear_gt` | `{}` | empty GT ring, returns `{count:0}` |
+| GET | `/cough/eval` | `?window_ms=<N>` | `{tp, fp, fn, precision_pct, recall_pct}` |
+| POST | `/cough/cfg` | `{thresh_mg, cluster_window_ms, min_peaks}` | applies + persists, returns `/cough` shape |
+
 ### Cloud STT (Deepgram)
 
 | Method | Path | Body | Returns |
@@ -103,7 +119,7 @@ Future streaming version flips this to WebSocket.
   "bpm": 14, "bpm_valid": true, "bpm_raw": 14,
   "resp_progress": 250, "resp_window_len": 250,
   "steps": 42, "step_cadence_ms": 612, "steps_per_min": 98,
-  "mode": "off|normal|turbo",
+  "mode": "off|normal|turbo|auto",
   "ionizer": true,
   "battery": {"pct":85,"charging":false,"fault":false,"state":"discharging"},
   "motion_irq_count": 17,
