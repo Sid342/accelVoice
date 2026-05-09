@@ -38,7 +38,10 @@
 #include "find.h"
 #include "wifi_sta.h"
 #include "ble_find.h"
+#include "voice.h"
+#include "stt.h"
 #include "web_index.h"
+#include <SPIFFS.h>
 
 static WebServer http(WIFI_HTTP_PORT);
 
@@ -88,6 +91,24 @@ static String kv_str(const String &b, const char *key)
     int q2 = b.indexOf('"', q + 1);
     if (q2 < 0) return String();
     return b.substring(q + 1, q2);
+}
+
+static String json_escape_str(const char *in)
+{
+    String out;
+    if (!in) return out;
+    out.reserve(strlen(in) + 8);
+    for (const char *p = in; *p; p++) {
+        char c = *p;
+        if      (c == '"')  out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else if ((unsigned char)c < 0x20) { /* drop other control chars */ }
+        else out += c;
+    }
+    return out;
 }
 
 /* ── LED encoding ────────────────────────────────────────────────────────── */
@@ -411,6 +432,124 @@ static void handle_settings_import(void)
     http.send(200, "application/json", "{\"ok\":true}");
 }
 
+/* ── Voice handlers ────────────────────────────────────────────────────── */
+static void handle_voice_status(void)
+{
+    char buf[400];
+    snprintf(buf, sizeof(buf),
+             "{\"state\":\"%s\",\"elapsed_ms\":%lu,\"bytes\":%lu,\"rms\":%d,"
+              "\"last_reason\":\"%s\",\"last_wav_size\":%lu,"
+              "\"vad_threshold\":%d,\"silence_ms\":%lu,\"timeout_ms\":%lu,"
+              "\"gain_shift\":%u,\"dc_blocker\":%s,\"noise_gate\":%d}",
+             voice_state_str(),
+             (unsigned long)voice_elapsed_ms(),
+             (unsigned long)voice_bytes_captured(),
+             voice_current_rms(),
+             voice_last_stop_reason(),
+             (unsigned long)voice_last_wav_size(),
+             voice_get_vad_threshold(),
+             (unsigned long)voice_get_silence_ms(),
+             (unsigned long)voice_get_timeout_ms(),
+             voice_get_gain_shift(),
+             voice_get_dc_blocker() ? "true" : "false",
+             voice_get_noise_gate());
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
+}
+static void handle_voice_start(void)
+{
+    String body = http.arg("plain");
+    int  timeout = kv_int(body, "timeout_ms", 0);
+    bool vad     = kv_bool(body, "vad", true);
+    bool ok = voice_start((uint32_t)timeout, vad);
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"ok\":%s,\"state\":\"%s\"}",
+             ok ? "true" : "false", voice_state_str());
+    http.send(ok ? 200 : 409, "application/json", buf);
+}
+static void handle_voice_stop(void)
+{
+    voice_stop("cmd");
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"state\":\"%s\"}", voice_state_str());
+    http.send(200, "application/json", buf);
+}
+static void handle_voice_config(void)
+{
+    String body = http.arg("plain");
+    int v;
+    v = kv_int(body, "vad_threshold", -1); if (v >= 0 && v <= 5000) voice_set_vad_threshold((int16_t)v);
+    v = kv_int(body, "silence_ms",    -1); if (v >= 200 && v <= 10000) voice_set_silence_ms((uint32_t)v);
+    v = kv_int(body, "timeout_ms",    -1); if (v >= 1000 && v <= 60000) voice_set_timeout_ms((uint32_t)v);
+    v = kv_int(body, "gain_shift",    -1); if (v >= 8 && v <= 18) voice_set_gain_shift((uint8_t)v);
+    v = kv_int(body, "noise_gate",    -1); if (v >= 0 && v <= 5000) voice_set_noise_gate((int16_t)v);
+    if (body.indexOf("\"dc_blocker\"") >= 0) {
+        voice_set_dc_blocker(kv_bool(body, "dc_blocker", voice_get_dc_blocker()));
+    }
+    handle_voice_status();
+}
+static void handle_voice_wav(void)
+{
+    if (!SPIFFS.exists(VOICE_WAV_PATH)) {
+        http.send(404, "text/plain", "no recording yet");
+        return;
+    }
+    File f = SPIFFS.open(VOICE_WAV_PATH, FILE_READ);
+    if (!f) {
+        http.send(500, "text/plain", "open failed");
+        return;
+    }
+    http.sendHeader("Content-Disposition", "attachment; filename=last.wav");
+    http.streamFile(f, "audio/wav");
+    f.close();
+}
+
+/* ── /stt/* (Deepgram cloud STT) ───────────────────────────────────────── */
+static const char *stt_state_name(stt_state_t s)
+{
+    switch (s) {
+        case STT_RUNNING: return "running";
+        case STT_DONE:    return "done";
+        case STT_ERROR:   return "error";
+        default:          return "idle";
+    }
+}
+static void handle_stt_status(void)
+{
+    String tx = json_escape_str(stt_last_transcript());
+    String er = json_escape_str(stt_last_err());
+    String mh = json_escape_str(stt_key_hint());
+    String md = json_escape_str(stt_get_model());
+    String body;
+    body.reserve(tx.length() + er.length() + 256);
+    body  = "{\"state\":\"";       body += stt_state_name(stt_state()); body += "\"";
+    body += ",\"key_hint\":\"";    body += mh; body += "\"";
+    body += ",\"model\":\"";       body += md; body += "\"";
+    body += ",\"http\":";          body += stt_last_http_status();
+    body += ",\"rc\":";            body += stt_last_rc();
+    body += ",\"dur_ms\":";        body += (uint32_t)stt_last_duration_ms();
+    body += ",\"wav_bytes\":";     body += (uint32_t)stt_last_wav_bytes();
+    body += ",\"transcript\":\""; body += tx; body += "\"";
+    body += ",\"err\":\"";         body += er; body += "\"}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
+}
+static void handle_stt_key(void)
+{
+    String b = http.arg("plain");
+    String key   = kv_str(b, "key");
+    String model = kv_str(b, "model");
+    if (model.length() > 0) stt_set_model(model.c_str());
+    /* Only update key if "key" field is present in body. Empty string clears. */
+    if (b.indexOf("\"key\"") >= 0) stt_set_key(key.c_str());
+    handle_stt_status();
+}
+static void handle_stt_run(void)
+{
+    stt_transcribe_last_wav();   /* blocks 1–3 s */
+    handle_stt_status();
+}
+
 /* ── /find (start), /find/stop ─────────────────────────────────────────── */
 static void handle_find_post(void)
 {
@@ -498,6 +637,14 @@ static void http_start(void)
     http.on("/system",           HTTP_GET,  handle_system);
     http.on("/settings/export",  HTTP_GET,  handle_settings_export);
     http.on("/settings/import",  HTTP_POST, handle_settings_import);
+    http.on("/voice/status",     HTTP_GET,  handle_voice_status);
+    http.on("/voice/start",      HTTP_POST, handle_voice_start);
+    http.on("/voice/stop",       HTTP_POST, handle_voice_stop);
+    http.on("/voice/config",     HTTP_POST, handle_voice_config);
+    http.on("/voice/last.wav",   HTTP_GET,  handle_voice_wav);
+    http.on("/stt/status",       HTTP_GET,  handle_stt_status);
+    http.on("/stt/key",          HTTP_POST, handle_stt_key);
+    http.on("/stt/run",          HTTP_POST, handle_stt_run);
     http.onNotFound(handle_404);
     http.begin();
     Serial.print(F("[http] listening on :")); Serial.println(WIFI_HTTP_PORT);
@@ -529,6 +676,8 @@ void setup(void)
     samplelog_init();
     motionlog_init();
     find_init();
+    voice_init();
+    stt_init();
     mode_set(APP_MODE_NORMAL);
     battsim_set(80, false, false);
 
@@ -559,6 +708,7 @@ void loop(void)
     http.handleClient();
     net_loop_tick();
     ble_find_loop_tick();
+    voice_loop_tick();
 
     if (accel_motion_flag_take()) {
         wear_notify_motion();

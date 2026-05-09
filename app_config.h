@@ -39,3 +39,22 @@
 #define WIFI_AP_SSID            "atovio-bench"
 #define WIFI_AP_PASSWORD        "atovio1234"     /* WPA2, ≥ 8 chars            */
 #define WIFI_HTTP_PORT          80
+
+/* ── Voice / I²S microphone (INMP441 default) ────────────────────────────── */
+#define PIN_I2S_WS              32     /* WS / LRCLK → INMP441 WS            */
+#define PIN_I2S_SCK             33     /* SCK / BCLK → INMP441 SCK           */
+#define PIN_I2S_SD              35     /* SD / DATA  → INMP441 SD (input only) */
+
+#define VOICE_SAMPLE_RATE_HZ    16000  /* 16 kHz wideband; 8000 also supported */
+#define VOICE_BITS_PER_SAMPLE   16     /* PCM stored as 16-bit, raw is 24/32 */
+#define VOICE_GAIN_SHIFT        14     /* INMP441 32-bit raw → int16 via >>14 (≈4× gain) */
+
+#define VOICE_TIMEOUT_MS        10000  /* hard stop after this long          */
+#define VOICE_VAD_RMS_THRESH    150    /* below this RMS for silence_ms → stop */
+#define VOICE_VAD_SILENCE_MS    1500   /* sustained silence to trigger stop  */
+#define VOICE_MAX_FILE_BYTES    900000 /* leave room in 1 MB SPIFFS partition */
+#define VOICE_WAV_PATH          "/last.wav"
+
+/* ── Cloud STT (Deepgram) ─────────────────────────────────────────────────── */
+#define STT_DEFAULT_MODEL       "nova-2"   /* nova-3 also works if account allows */
+#define STT_HTTP_TIMEOUT_MS     30000      /* read timeout for /v1/listen        */

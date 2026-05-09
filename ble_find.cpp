@@ -25,7 +25,17 @@ class RingCb : public BLECharacteristicCallbacks {
     }
 };
 
+/* No-op at boot. Real BLE stack init deferred until first start_adv() call —
+ * ESP32 BLE+WiFi RF coexistence can starve WiFi association handshakes when
+ * BLE stack is running, even idle. Keeping BLE dormant until needed.         */
 void ble_find_init(void)
+{
+    s_inited = false;
+    s_advertising = false;
+    Serial.println(F("[ble] dormant — will init on first start_adv()"));
+}
+
+static void lazy_init(void)
 {
     if (s_inited) return;
     BLEDevice::init("atovio-bench");
@@ -48,13 +58,12 @@ void ble_find_init(void)
     s_adv->setMinPreferred(0x12);
 
     s_inited = true;
-    s_advertising = false;
-    Serial.println(F("[ble] init done — not advertising"));
+    Serial.println(F("[ble] stack initialised"));
 }
 
 void ble_find_start_adv(uint32_t duration_ms)
 {
-    if (!s_inited) return;
+    lazy_init();
     if (duration_ms == 0) duration_ms = DEFAULT_ADV_MS;
     s_adv->start();
     s_advertising = true;
@@ -64,7 +73,11 @@ void ble_find_start_adv(uint32_t duration_ms)
 
 void ble_find_stop_adv(void)
 {
-    if (!s_inited) return;
+    if (!s_inited) {
+        s_advertising = false;
+        s_until_ms = 0;
+        return;
+    }
     s_adv->stop();
     s_advertising = false;
     s_until_ms = 0;

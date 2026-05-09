@@ -118,6 +118,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <button data-tab="system">System</button>
     <button data-tab="network">Network</button>
     <button data-tab="find">Find</button>
+    <button data-tab="voice">Voice</button>
   </nav>
 </header>
 
@@ -327,17 +328,121 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   </div>
 </div>
 
+<!-- ─────────────── VOICE ─────────────── -->
+<div class="tab" id="tab-voice">
+  <div class="section">
+    <h2>Recording</h2>
+    <div class="cards" style="grid-template-columns:repeat(3,1fr)">
+      <div class="card"><div class="lbl">State</div><div id="vState" class="val off">…</div><div class="sub" id="vElapsed">—</div></div>
+      <div class="card"><div class="lbl">RMS (live)</div><div id="vRms" class="val">0</div><div class="sub" id="vRmsBar">—</div></div>
+      <div class="card"><div class="lbl">Bytes</div><div id="vBytes" class="val">0</div><div class="sub" id="vReason">—</div></div>
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn act" id="vTalk" onclick="vStart()">● Talk (tap)</button>
+      <button class="btn warn" id="vStop" onclick="vStop()" style="display:none">■ Stop</button>
+      <button class="btn primary" id="vHold"
+              onmousedown="vStart()" onmouseup="vStop()"
+              ontouchstart="event.preventDefault();vStart()" ontouchend="event.preventDefault();vStop()">
+        ⌨ Hold to Talk
+      </button>
+    </div>
+    <div class="note">Tap = record until VAD silence or hard timeout. Hold = record while button is held.</div>
+  </div>
+
+  <div class="section">
+    <h2>Last recording</h2>
+    <div class="kv">
+      <dt>File</dt><dd id="vFileSize">—</dd>
+      <dt>Stop reason</dt><dd id="vLastReason">—</dd>
+    </div>
+    <div class="actions" style="margin-top:10px">
+      <button class="btn" onclick="dl('/voice/last.wav')">Download last.wav</button>
+      <button class="btn" onclick="vPlay()">Play in browser</button>
+    </div>
+    <audio id="vPlayer" controls style="display:none;width:100%;margin-top:8px"></audio>
+  </div>
+
+  <div class="section">
+    <h2>Tunables</h2>
+    <div class="row"><label>VAD threshold (RMS)</label>
+      <input type="range" id="vadThr" min="0" max="2000" step="10" value="150">
+      <span id="vadThrV" class="num">150</span></div>
+    <div class="row"><label>Silence to stop</label>
+      <input type="range" id="silMs" min="200" max="5000" step="100" value="1500">
+      <span id="silMsV" class="num">1500 ms</span></div>
+    <div class="row"><label>Hard timeout</label>
+      <input type="range" id="vTo" min="1000" max="60000" step="500" value="10000">
+      <span id="vToV" class="num">10000 ms</span></div>
+    <div class="row"><label>Gain shift</label>
+      <input type="range" id="vGain" min="10" max="18" step="1" value="14">
+      <span id="vGainV" class="num">14 (4×)</span></div>
+    <div class="modeline">
+      <label><input type="checkbox" id="dcBlk" checked onchange="vDcToggle()"> DC blocker (kills hum/rumble)</label>
+    </div>
+    <div class="row"><label>Noise gate (mute below)</label>
+      <input type="range" id="ngate" min="0" max="2000" step="10" value="0">
+      <span id="ngateV" class="num">0 (off)</span></div>
+    <div class="note">VAD compares live RMS against threshold; below threshold for silence period → auto-stop.
+      Lower gain shift = louder; raise if clipping.
+      <strong>DC blocker</strong> removes the constant low-frequency rumble most digital MEMS mics produce — usually the biggest fix for "background noise".
+      <strong>Noise gate</strong> zeros samples below the threshold (cleans up silent gaps); start with 100–300 if hiss persists.</div>
+  </div>
+
+  <div class="section">
+    <h2>Cloud STT (Deepgram)</h2>
+    <div class="cards" style="grid-template-columns:repeat(3,1fr)">
+      <div class="card"><div class="lbl">State</div><div id="sttState" class="val">idle</div><div class="sub" id="sttDur">—</div></div>
+      <div class="card"><div class="lbl">API key</div><div id="sttKey" class="val" style="font-size:14px">not set</div><div class="sub" id="sttModel">model: —</div></div>
+      <div class="card"><div class="lbl">Last HTTP</div><div id="sttHttp" class="val">—</div><div class="sub" id="sttRc">rc: —</div></div>
+    </div>
+    <div class="row" style="margin-top:10px"><label>API key</label>
+      <input type="password" id="sttKeyIn" placeholder="paste Deepgram token" style="flex:1;min-width:200px">
+    </div>
+    <div class="row"><label>Model</label>
+      <input type="text" id="sttModelIn" value="nova-2" style="flex:1;min-width:160px">
+      <span class="num" style="font-size:11px">nova-2 / nova-3 / enhanced</span>
+    </div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn primary" onclick="sttSaveKey()">Save key + model</button>
+      <button class="btn warn" onclick="sttClearKey()">Clear key</button>
+      <button class="btn act" id="sttRunBtn" onclick="sttRun()">Transcribe last.wav</button>
+    </div>
+    <div style="margin-top:10px">
+      <div class="lbl">Transcript</div>
+      <pre id="sttTx" style="background:#0e1116;color:#dfe7ef;padding:10px;border-radius:6px;min-height:48px;white-space:pre-wrap;word-break:break-word">—</pre>
+      <div class="sub" id="sttErr" style="color:#e58383"></div>
+    </div>
+    <div class="note">Requires <strong>WiFi STA</strong> connected to your home network (AP mode has no upstream internet).
+      Key stored in NVS, never returned in clear. TLS uses <code>setInsecure()</code> — bench-only; for production pin Deepgram's CA.
+      Cost: ~$0.004/min on nova-2.</div>
+  </div>
+
+  <div class="section">
+    <h2>Hookup (INMP441)</h2>
+    <div class="kv">
+      <dt>VDD</dt><dd>3V3</dd>
+      <dt>GND</dt><dd>GND</dd>
+      <dt>L/R</dt><dd>GND (left channel)</dd>
+      <dt>WS</dt><dd>GPIO 32</dd>
+      <dt>SCK</dt><dd>GPIO 33</dd>
+      <dt>SD</dt><dd>GPIO 35 (input-only)</dd>
+    </div>
+    <div class="note">If RMS stays at 0 with no signal motion when you talk → check power LED on mic, GND continuity, and that L/R is tied to GND not VDD.</div>
+  </div>
+</div>
+
 </main>
 
 <script>
 /* ── Tab switching ───────────────────────────────────────────────────────── */
-const TABS=['live','tune','system','network','find'];
+const TABS=['live','tune','system','network','find','voice'];
 function showTab(name){
   TABS.forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===name);
     document.querySelector('#tabnav button[data-tab="'+t+'"]').classList.toggle('active',t===name);
   });
   if(name==='network'){fetchWifi();fetchSystem();}
+  if(name==='voice'){fetchVoice();fetchStt();}
 }
 document.querySelectorAll('#tabnav button').forEach(b=>{
   b.addEventListener('click',()=>showTab(b.dataset.tab));
@@ -554,6 +659,122 @@ async function fetchSystem(){
     setText('sysHeap',(d.free_heap/1024).toFixed(1)+' KB');
     setText('sysChip',d.chip_model+' · '+d.sdk);
   }catch(e){}
+}
+
+/* ── Voice ───────────────────────────────────────────────────────────────── */
+async function fetchVoice(){
+  try{
+    const r=await fetch('/voice/status',{cache:'no-store'});const d=await r.json();
+    const sEl=document.getElementById('vState');
+    sEl.textContent=d.state.toUpperCase();
+    sEl.className='val '+(d.state==='streaming'?'on':'off');
+    setText('vElapsed',d.elapsed_ms?(d.elapsed_ms/1000).toFixed(1)+' s':'—');
+    setText('vRms',d.rms);
+    /* horizontal RMS bar via shaded text */
+    const barLen=Math.min(20,Math.round(d.rms/100));
+    setText('vRmsBar','█'.repeat(barLen)+'·'.repeat(20-barLen));
+    setText('vBytes',d.bytes);
+    setText('vReason',d.last_reason);
+    setText('vFileSize',d.last_wav_size?(d.last_wav_size/1024).toFixed(1)+' KB':'—');
+    setText('vLastReason',d.last_reason);
+    document.getElementById('vTalk').style.display=d.state==='streaming'?'none':'';
+    document.getElementById('vStop').style.display=d.state==='streaming'?'':'none';
+    if(Date.now()>suppressUntil){
+      setSlider('vadThr',d.vad_threshold,'');
+      setSlider('silMs',d.silence_ms,'ms');
+      setSlider('vTo',d.timeout_ms,'ms');
+      const g=d.gain_shift;
+      document.getElementById('vGain').value=g;
+      document.getElementById('vGainV').textContent=g+' ('+Math.pow(2,18-g).toFixed(0)+'×)';
+      document.getElementById('dcBlk').checked=d.dc_blocker;
+      const ng=d.noise_gate;
+      document.getElementById('ngate').value=ng;
+      document.getElementById('ngateV').textContent=ng?ng:'0 (off)';
+    }
+  }catch(e){}
+}
+function vStart(){suppress();pj('/voice/start',JSON.stringify({timeout_ms:+document.getElementById('vTo').value,vad:true})).then(fetchVoice);}
+function vStop(){suppress();pj('/voice/stop','{}').then(fetchVoice);}
+function vPlay(){
+  const a=document.getElementById('vPlayer');
+  a.style.display='block';
+  a.src='/voice/last.wav?'+Date.now();
+  a.play();
+}
+['vadThr','silMs','vTo'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener('input',()=>{
+    suppress();
+    document.getElementById(id+'V').textContent=el.value+(id==='vadThr'?'':' ms');
+    clearTimeout(el._t);
+    const body={};
+    if(id==='vadThr')body.vad_threshold=+el.value;
+    if(id==='silMs') body.silence_ms=+el.value;
+    if(id==='vTo')   body.timeout_ms=+el.value;
+    el._t=setTimeout(()=>pj('/voice/config',JSON.stringify(body)),200);
+  });
+});
+document.getElementById('vGain').addEventListener('input',e=>{
+  suppress();
+  const g=+e.target.value;
+  document.getElementById('vGainV').textContent=g+' ('+Math.pow(2,18-g).toFixed(0)+'×)';
+  clearTimeout(e.target._t);
+  e.target._t=setTimeout(()=>pj('/voice/config',JSON.stringify({gain_shift:g})),200);
+});
+document.getElementById('ngate').addEventListener('input',e=>{
+  suppress();
+  const v=+e.target.value;
+  document.getElementById('ngateV').textContent=v?v:'0 (off)';
+  clearTimeout(e.target._t);
+  e.target._t=setTimeout(()=>pj('/voice/config',JSON.stringify({noise_gate:v})),200);
+});
+function vDcToggle(){
+  suppress();
+  const en=document.getElementById('dcBlk').checked;
+  pj('/voice/config',JSON.stringify({dc_blocker:en}));
+}
+setInterval(()=>{if(document.getElementById('tab-voice').classList.contains('active'))fetchVoice();},150);
+
+/* ── Cloud STT (Deepgram) ───────────────────────────────────────────────── */
+async function fetchStt(){
+  try{
+    const r=await fetch('/stt/status',{cache:'no-store'});const d=await r.json();
+    const st=document.getElementById('sttState');
+    setText('sttState',d.state);
+    st.className='val '+(d.state==='error'?'off':(d.state==='done'?'on':''));
+    setText('sttDur', d.dur_ms?d.dur_ms+' ms':'—');
+    setText('sttKey', d.key_hint);
+    setText('sttModel','model: '+d.model);
+    setText('sttHttp', d.http||'—');
+    setText('sttRc','rc: '+d.rc+(d.wav_bytes?' · '+d.wav_bytes+' B':''));
+    document.getElementById('sttTx').textContent=d.transcript||'—';
+    document.getElementById('sttErr').textContent=d.err||'';
+    const mi=document.getElementById('sttModelIn'); if(mi&&document.activeElement!==mi) mi.value=d.model||'nova-2';
+  }catch(e){}
+}
+function sttSaveKey(){
+  const key=document.getElementById('sttKeyIn').value;
+  const model=document.getElementById('sttModelIn').value||'nova-2';
+  pj('/stt/key',JSON.stringify({key:key,model:model})).then(()=>{document.getElementById('sttKeyIn').value='';fetchStt();});
+}
+function sttClearKey(){pj('/stt/key',JSON.stringify({key:''})).then(fetchStt);}
+function sttRun(){
+  const btn=document.getElementById('sttRunBtn');
+  btn.disabled=true;btn.textContent='Transcribing…';
+  document.getElementById('sttTx').textContent='…';
+  document.getElementById('sttErr').textContent='';
+  setText('sttState','running');
+  pj('/stt/run','{}').then(r=>r.json()).then(d=>{
+    setText('sttState',d.state);
+    setText('sttDur', d.dur_ms?d.dur_ms+' ms':'—');
+    setText('sttHttp', d.http||'—');
+    setText('sttRc','rc: '+d.rc+(d.wav_bytes?' · '+d.wav_bytes+' B':''));
+    document.getElementById('sttTx').textContent=d.transcript||'—';
+    document.getElementById('sttErr').textContent=d.err||'';
+    const st=document.getElementById('sttState');
+    st.className='val '+(d.state==='error'?'off':(d.state==='done'?'on':''));
+  }).catch(e=>{document.getElementById('sttErr').textContent='request failed: '+e;})
+    .finally(()=>{btn.disabled=false;btn.textContent='Transcribe last.wav';});
 }
 
 /* ── Motion log @ 1 Hz ───────────────────────────────────────────────────── */
