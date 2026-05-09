@@ -119,6 +119,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <button data-tab="step">Step</button>
     <button data-tab="cough">Cough</button>
     <button data-tab="slouch">Slouch</button>
+    <button data-tab="fall">Fall</button>
     <button data-tab="tune">Tune</button>
     <button data-tab="system">System</button>
     <button data-tab="network">Network</button>
@@ -449,6 +450,48 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   </div>
 </div>
 
+<!-- ─────────────── FALL ─────────────── -->
+<div class="tab" id="tab-fall">
+  <div class="section" id="fallSec">
+    <h2>Fall — 3-stage SM (free-fall → impact → stillness)</h2>
+    <div class="cards">
+      <div class="card"><div class="lbl">State</div><div id="flState" class="val off">IDLE</div><div class="sub" id="flStateSub">—</div></div>
+      <div class="card"><div class="lbl">Total falls</div><div id="flTot" class="val">0</div><div class="sub">since boot</div></div>
+      <div class="card"><div class="lbl">Last fall</div><div id="flAge" class="val">—</div><div class="sub" id="flAgeSub">—</div></div>
+      <div class="card"><div class="lbl">Sensitivity</div><div id="flProf" class="val">DEFAULT</div><div class="sub" id="flProfSub">FF/IMP</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Tunables</h2>
+    <div class="row"><label>Free-fall threshold</label>
+      <input type="range" id="flFf" min="200" max="500" step="10" value="300">
+      <span id="flFfV" class="num">300 mg</span></div>
+    <div class="row"><label>Impact threshold</label>
+      <input type="range" id="flImp" min="1500" max="4000" step="50" value="2500">
+      <span id="flImpV" class="num">2500 mg</span></div>
+    <div class="note">Free-fall: mag below threshold for ≥ 100 ms. Impact: peak above threshold within 800 ms. Stillness: MAD &lt; 30 mg for 1.5 s within 5 s after impact. CONFIRMED auto-clears after 60 s.</div>
+  </div>
+
+  <div class="section">
+    <h2>Actions</h2>
+    <div class="actions">
+      <button class="btn primary" onclick="flSim()">Simulate Fall</button>
+    </div>
+    <div class="note" style="margin-top:8px">Fires a synthetic CONFIRMED event so you can exercise the UI without dropping the device.</div>
+  </div>
+
+  <div class="section">
+    <h2>Recent falls</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;color:var(--dim)">
+        <th>#</th><th>Age</th><th>FF min</th><th>Impact</th><th>MAD</th><th>Sim</th>
+      </tr></thead>
+      <tbody id="flTblBody"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ─────────────── TUNE ─────────────── -->
 <div class="tab" id="tab-tune">
   <div class="section">
@@ -744,7 +787,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 <script>
 /* ── Tab switching ───────────────────────────────────────────────────────── */
-const TABS=['live','device','breath','step','cough','slouch','tune','system','network','find','voice'];
+const TABS=['live','device','breath','step','cough','slouch','fall','tune','system','network','find','voice'];
 function showTab(name){
   TABS.forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===name);
@@ -757,6 +800,7 @@ function showTab(name){
   if(name==='step'){drawStepTrace();}
   if(name==='cough'){tickCough();}
   if(name==='slouch'){tickSlouch();}
+  if(name==='fall'){tickFall();}
 }
 document.querySelectorAll('#tabnav button').forEach(b=>{
   b.addEventListener('click',()=>showTab(b.dataset.tab));
@@ -1639,6 +1683,69 @@ function slReset(){pj('/slouch/reset','{}').then(tickSlouch);}
     if(id==='slThr')body.thresh_deg=+el.value;
     if(id==='slSus')body.sustain_sec=+el.value;
     el._t=setTimeout(()=>pj('/slouch/cfg',JSON.stringify(body)),200);
+  });
+});
+
+/* ── Fall tab ────────────────────────────────────────────────────────────── */
+async function tickFall(){
+  if(!document.getElementById('tab-fall').classList.contains('active'))return;
+  try{
+    const [s,e]=await Promise.all([
+      fetch('/fall',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/fall/events?since=0',{cache:'no-store'}).then(r=>r.json()),
+    ]);
+    const stEl=document.getElementById('flState');
+    stEl.textContent=s.state.toUpperCase().replace('_',' ');
+    let cls='off',flash=false;
+    if(s.state==='confirmed'){cls='off';flash=true;}
+    else if(s.state==='idle'){cls='off';}
+    else{cls='warn';}
+    stEl.className='val '+cls;
+    document.getElementById('fallSec').style.borderLeft = flash? '3px solid var(--red)' : '';
+    setText('flStateSub', s.state==='confirmed'?'auto-clears in 60 s':(s.state==='idle'?'monitoring':'in progress'));
+    setText('flTot', s.total);
+    setText('flAge', s.last_age_ms? fmtAgeShort(s.last_age_ms) : '—');
+    setText('flAgeSub', s.total? 'since last event' : '—');
+    /* sensitivity profile */
+    let prof='DEFAULT';
+    if(s.freefall_mg<300||s.impact_mg<2500)prof='SENSITIVE';
+    else if(s.freefall_mg>320||s.impact_mg>3000)prof='RELAXED';
+    setText('flProf', prof);
+    setText('flProfSub', s.freefall_mg+' / '+s.impact_mg+' mg');
+    if(Date.now()>suppressUntil){
+      setSlider('flFf', s.freefall_mg, 'mg');
+      setSlider('flImp', s.impact_mg, 'mg');
+    }
+    if(e.events){
+      const tb=document.getElementById('flTblBody');
+      const evs=e.events.slice(-12);
+      const rows=evs.slice().reverse().map((ev,i)=>{
+        const age=fmtAgeShort(e.now-ev.t);
+        return '<tr style="border-top:1px solid #334155">'
+          +'<td style="padding:4px 0">'+(evs.length-i)+'</td>'
+          +'<td>'+age+'</td>'
+          +'<td>'+ev.ff_min+' mg</td>'
+          +'<td>'+ev.imp_max+' mg</td>'
+          +'<td>'+ev.mad+' mg</td>'
+          +'<td>'+(ev.sim?'sim':'real')+'</td>'
+          +'</tr>';
+      }).join('');
+      tb.innerHTML=rows||'<tr><td colspan="6" style="padding:6px 0;color:#94a3b8">no falls yet</td></tr>';
+    }
+  }catch(err){}
+}
+setInterval(tickFall,1000);
+function flSim(){pj('/fall/simulate','{}').then(tickFall);}
+['flFf','flImp'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener('input',()=>{
+    suppress();
+    document.getElementById(id+'V').textContent=el.value+' mg';
+    clearTimeout(el._t);
+    const body={};
+    if(id==='flFf') body.freefall_mg=+el.value;
+    if(id==='flImp')body.impact_mg=+el.value;
+    el._t=setTimeout(()=>pj('/fall/cfg',JSON.stringify(body)),200);
   });
 });
 

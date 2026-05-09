@@ -70,6 +70,21 @@ key `sl_base`. Note: the LIS2DW12 has a hardware sleep/idle interrupt that
 can wake the slouch SM only when the user stops moving — opportunity to
 gate the per-second tick to save MCU wake events.
 
+**Fall detector** (`firmware/fall.cpp`) is a 3-stage software SM at
+100 Hz. Bench algorithm ports as-is, but **LIS2DW12 has hardware
+free-fall and double-tap interrupts** that make most of the bench logic
+unnecessary in production:
+
+- LIS2DW12 `WAKE_UP_THS` + `WAKE_UP_DUR` give a hardware free-fall
+  interrupt — fire it on the IRQ pin and only run the impact/stillness
+  parts of the SM in software.
+- LIS2DW12 has a built-in tap detector for impact discrimination.
+- Stillness can be replaced by the inactivity (sleep) interrupt.
+
+The hand-rolled software SM here is the validation baseline; the
+production port should swap stages 1 and 3 for hardware-assisted
+detection while keeping the 800 ms / 5 s gate timings.
+
 **Mode AUTO** — production default. AUTO follows wear; NORMAL/TURBO are
 bench/lab modes that ignore the wear sensor and always run the ionizer
 (respecting OFF + battery). AUTO is what production firmware should

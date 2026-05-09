@@ -14,6 +14,7 @@ TLS — because this device only ever lives on the bench network.
 | **Step** | step trace + ground-truth eval + recent steps |
 | **Cough** | envelope plot, threshold/cluster/min-peaks sliders, GT taps + precision/recall |
 | **Slouch** | live pitch + deviation, "Sit Up Straight" calibration, session table |
+| **Fall** | 3-stage SM state, total falls, simulate button, recent falls |
 | **Tune** | sliders for every wear / step / resp threshold; calibrate accel; reset steps & resp; force wear |
 | **System** | hostname, AP/STA IP, RSSI, uptime, build/heap/chip, reboot, settings export |
 | **Network** | AP info, STA join form (SSID/pass), mDNS hostname, OTA status |
@@ -102,6 +103,18 @@ init eagerly.
 | POST | `/slouch/reset` | `{}` | clears stats + event ring |
 | GET | `/slouch/events` | `?since=<ms>` | `{now, total, events:[{t,dur,max_dev_x10}…]}` |
 | POST | `/slouch/cfg` | `{thresh_deg, sustain_sec}` | applies + persists, returns `/slouch` |
+
+### Phase 2.5 — Fall
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/fall` | — | `{state, total, last_age_ms, freefall_mg, impact_mg}` |
+| GET | `/fall/events` | `?since=<ms>` | `{now, total, events:[{t,ff_min,imp_max,mad,sim}…]}` |
+| POST | `/fall/simulate` | `{}` | jumps SM to CONFIRMED, pushes synthetic event with `sim:true` |
+| POST | `/fall/cfg` | `{freefall_mg, impact_mg}` | applies + persists, returns `/fall` |
+
+State values: `idle`, `freefall`, `impact`, `still_pend`, `confirmed`.
+`confirmed` auto-decays to `idle` after 60 s.
 
 ### Cloud STT (Deepgram)
 

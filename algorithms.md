@@ -19,10 +19,11 @@ is consumed by **cough** (and **fall** in commit 4).
 4. [Step counting](#step-counting)
 5. [Cough detection](#cough-detection)
 6. [Slouch detection](#slouch-detection)
-7. [Voice DSP](#voice-dsp)
-8. [Tunables — full table by subsystem](#tunables--full-table-by-subsystem)
-9. [Persistence map (NVS)](#persistence-map-nvs)
-10. [Glossary](#glossary)
+7. [Fall detection](#fall-detection)
+8. [Voice DSP](#voice-dsp)
+9. [Tunables — full table by subsystem](#tunables--full-table-by-subsystem)
+10. [Persistence map (NVS)](#persistence-map-nvs)
+11. [Glossary](#glossary)
 
 ---
 
@@ -550,6 +551,108 @@ Compile-time:
 
 ---
 
+## Fall detection
+
+Source: `firmware/fall.cpp`. Pipeline runs at the **100 Hz** sample rate
+(every fast-loop tick) and consumes the precomputed magnitude.
+
+### State machine
+
+```
+                ┌─────────┐
+                │  IDLE   │ ◄────────────────────────────────────────┐
+                └────┬────┘                                          │
+       mag < FALL_FREEFALL_MG for ≥ FALL_FREEFALL_MIN_MS (100 ms)    │
+                     │                                               │
+                     ▼                                               │
+                ┌──────────┐  window expired                         │
+                │ FREEFALL ├──────────────────────────────────────► reset
+                └────┬─────┘                                         │
+       mag > FALL_IMPACT_MG within FALL_IMPACT_WINDOW_MS (800 ms)    │
+                     │                                               │
+                     ▼                                               │
+                ┌────────┐                                           │
+                │ IMPACT │                                           │
+                └────┬───┘                                           │
+       MAD-of-mag(1 s) < FALL_STILL_MAD_MG                           │
+                     │   ◄── starts dwell timer                      │
+                     ▼                                               │
+                ┌────────────┐  movement breaks stillness            │
+                │ STILL_PEND ├────────────► back to IMPACT (resets   │
+                └────┬───────┘              dwell within window)     │
+       dwell ≥ FALL_STILL_MIN_MS (1.5 s)                             │
+       within FALL_STILL_WINDOW_MS (5 s)                             │
+                     │                                               │
+                     ▼                                               │
+                ┌──────────┐                                         │
+                │CONFIRMED │                                         │
+                └────┬─────┘                                         │
+       hold ≥ FALL_CONFIRMED_HOLD_MS (60 s)                          │
+                     └───────────────────────────────────────────────┘
+```
+
+Any timeout without progression resets to IDLE. CONFIRMED auto-decays back
+to IDLE so the device doesn't get stuck in a "fall reported" state.
+
+### Why three stages
+
+A real fall has all three signatures:
+
+1. **Free-fall** — when the wrist (and arm) is in ballistic descent, the
+   accelerometer reads near zero g (mag ≪ 1000 mg). Default 300 mg is
+   conservative — true free-fall reads <100 mg, but real wrist motions
+   during a stumble dip into 200–400 mg.
+2. **Impact** — collision with the floor produces a brief mag spike of
+   2.5–6 g. A drop on carpet is ~2.5 g; a fall on hard floor 3–5 g; the
+   impact threshold catches the lower bound.
+3. **Stillness** — the user, after impact, stays roughly still for 1.5 s
+   or longer (often longer; injured users stay still for several seconds).
+   We use MAD over a 1-second ring as a cheap stillness probe.
+
+Requiring all three rejects every two-of-three false positive: a chair
+slam (impact + stillness, no free-fall), a hand wave (free-fall in the
+wrist + no impact), a tremor episode (impact-like spike, no still).
+
+### Simulate trigger
+
+`POST /fall/simulate` jumps the SM straight to CONFIRMED and pushes a
+synthetic event with `simulated:true`. UI exercise only — never used in
+production. Real events have `simulated:false`.
+
+### Known limitations
+
+- **Sit-on-the-floor** is mistaken for a fall (free-fall + impact +
+  stillness all line up). Production deals with this by adding a
+  height-from-baseline gate — out of scope here.
+- **Bed drop** at night has all three signatures. Mitigation: gate fall
+  events on `wear_get_state() == ON_BODY` AND a "user is up and moving"
+  heuristic (last-step-event recency). Not implemented yet.
+- **MAD computed only inside STILL_PEND** is intentional — running it on
+  every sample wastes CPU during normal use. Side effect: the MAD ring
+  must already contain a second of history when STILL_PEND begins.
+  We feed the ring on every tick to satisfy this.
+
+### Fall tunables
+
+| Param | Default | Range | Unit | Persists | NVS key |
+|---|---:|---|---|---|---|
+| `fall_freefall_mg` | 300 | 100–1000 | mg | yes | `fl_ff` |
+| `fall_impact_mg` | 2500 | 1000–8000 | mg | yes | `fl_imp` |
+
+Compile-time (all in `app_config.h`):
+
+| Constant | Value | Notes |
+|---|---:|---|
+| `FALL_FREEFALL_MIN_MS` | 100 | dwell to confirm free-fall |
+| `FALL_IMPACT_WINDOW_MS` | 800 | window after free-fall to find impact |
+| `FALL_STILL_MAD_MG` | 30 | MAD threshold for "still" |
+| `FALL_STILL_MIN_MS` | 1500 | dwell to confirm stillness |
+| `FALL_STILL_WINDOW_MS` | 5000 | window after impact to find stillness |
+| `FALL_CONFIRMED_HOLD_MS` | 60000 | auto-clear back to IDLE |
+| `FALL_MAD_WIN_SAMPLES` | 100 | 1 s ring @ 100 Hz |
+
+---
+
 ## Voice DSP
 
 Source: `firmware/voice.cpp`. Runs after each I²S DMA buffer (≈10 ms) before
@@ -690,6 +793,13 @@ constants are listed for reference but cannot be changed without re-flashing.
 | `slouch_baseline_deg_x10` | 0 | ±900 | deg×10 | yes (via calibrate) | `cfg` |
 | `slouch_thresh_deg` | 15 | 1–60 | deg | yes | `cfg` |
 | `slouch_sustain_sec` | 5 | 1–60 | s | yes | `cfg` |
+
+### Fall
+
+| Param | Default | Range | Unit | Persists | NVS namespace |
+|---|---:|---|---|---|---|
+| `fall_freefall_mg` | 300 | 100–1000 | mg | yes | `cfg` |
+| `fall_impact_mg` | 2500 | 1000–8000 | mg | yes | `cfg` |
 
 ### Mode
 

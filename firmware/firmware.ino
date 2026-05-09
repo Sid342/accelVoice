@@ -42,6 +42,7 @@
 #include "stt.h"
 #include "cough.h"
 #include "slouch.h"
+#include "fall.h"
 #include "web_index.h"
 #include <SPIFFS.h>
 
@@ -1010,6 +1011,65 @@ static void handle_slouch_cfg(void)
     handle_slouch_status();
 }
 
+/* ── /fall/* ───────────────────────────────────────────────────────────── */
+static void handle_fall_status(void)
+{
+    char buf[260];
+    fall_state_t st = fall_get_state();
+    uint32_t lf = fall_last_fall_ms();
+    uint32_t age = (lf == 0) ? 0 : (millis() - lf);
+    snprintf(buf, sizeof(buf),
+             "{\"state\":\"%s\",\"total\":%lu,\"last_age_ms\":%lu,"
+              "\"freefall_mg\":%u,\"impact_mg\":%u}",
+             fall_state_str(st),
+             (unsigned long)fall_total_falls(),
+             (unsigned long)age,
+             fall_get_freefall_mg(), fall_get_impact_mg());
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
+}
+static void handle_fall_events(void)
+{
+    String s = http.arg("since");
+    uint32_t since = (uint32_t)s.toInt();
+    fall_event_t evts[8];
+    size_t n = fall_get_events_since(since, evts, sizeof(evts)/sizeof(evts[0]));
+    String body;
+    body.reserve(96 + n * 80);
+    body  = "{\"now\":";   body += (uint32_t)millis();
+    body += ",\"total\":"; body += (uint32_t)fall_total_falls();
+    body += ",\"events\":[";
+    for (size_t i = 0; i < n; i++) {
+        if (i) body += ',';
+        body += "{\"t\":";        body += (uint32_t)evts[i].t_ms;
+        body += ",\"ff_min\":";   body += (uint32_t)evts[i].freefall_min_mg;
+        body += ",\"imp_max\":";  body += (uint32_t)evts[i].impact_max_mg;
+        body += ",\"mad\":";      body += (uint32_t)evts[i].still_mad_mg;
+        body += ",\"sim\":";      body += evts[i].simulated ? "true" : "false";
+        body += '}';
+    }
+    body += "]}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
+}
+static void handle_fall_simulate(void)
+{
+    fall_simulate();
+    handle_fall_status();
+}
+static void handle_fall_cfg(void)
+{
+    String body = http.arg("plain");
+    cfg_t *c = cfg_get();
+    int v;
+    v = kv_int(body, "freefall_mg", -1);
+    if (v >= 100 && v <= 1000) { c->fall_freefall_mg = (uint16_t)v; fall_set_freefall_mg((uint16_t)v); }
+    v = kv_int(body, "impact_mg", -1);
+    if (v >= 1000 && v <= 8000) { c->fall_impact_mg = (uint16_t)v; fall_set_impact_mg((uint16_t)v); }
+    cfg_save();
+    handle_fall_status();
+}
+
 /* ── /find (start), /find/stop ─────────────────────────────────────────── */
 static void handle_find_post(void)
 {
@@ -1125,6 +1185,10 @@ static void http_start(void)
     http.on("/slouch/reset",     HTTP_POST, handle_slouch_reset);
     http.on("/slouch/events",    HTTP_GET,  handle_slouch_events);
     http.on("/slouch/cfg",       HTTP_POST, handle_slouch_cfg);
+    http.on("/fall",             HTTP_GET,  handle_fall_status);
+    http.on("/fall/events",      HTTP_GET,  handle_fall_events);
+    http.on("/fall/simulate",    HTTP_POST, handle_fall_simulate);
+    http.on("/fall/cfg",         HTTP_POST, handle_fall_cfg);
     http.onNotFound(handle_404);
     http.begin();
     Serial.print(F("[http] listening on :")); Serial.println(WIFI_HTTP_PORT);
@@ -1160,6 +1224,7 @@ void setup(void)
     stt_init();
     cough_init();
     slouch_init();
+    fall_init();
     /* mode is already restored from NVS via cfg_apply() above. */
     battsim_set(80, false, false);
 
@@ -1202,12 +1267,14 @@ void loop(void)
         accel_read_mg(&last_x_mg, &last_y_mg, &last_z_mg);
         last_mag_mg = mag_mg(last_x_mg, last_y_mg, last_z_mg);
 
-        /* 100 Hz consumers — cough only fires when on-body (talking +
-         * vibration false-positives off-wrist are out of scope). Fall lands
-         * in commit 4 and runs unconditionally. */
+        /* 100 Hz consumers. Cough only fires when on-body (talking +
+         * vibration false-positives off-wrist are out of scope). Fall runs
+         * unconditionally — fall data is valuable even when wear sensor
+         * disagrees. */
         if (wear_get_state() == WEAR_STATE_ON_BODY) {
             cough_feed_sample(last_x_mg, last_y_mg, last_z_mg);
         }
+        fall_feed_sample(last_x_mg, last_y_mg, last_z_mg, last_mag_mg);
 
         /* 25 Hz consumers — wear v2 / resp / steps decimated 1-in-4. */
         if (s_decim_n == 0) {

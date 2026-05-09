@@ -71,6 +71,18 @@
 #define STEP_GT_RING_SIZE       128
 #define STEP_AMP_BUF_MAX        128   /* covers up to 5120 ms @ 25 Hz           */
 
+/* ── Fall detection (3-stage SM: free-fall → impact → stillness) ──────────── */
+#define FALL_FREEFALL_MG_DEFAULT     300   /* mag below this = free-falling     */
+#define FALL_FREEFALL_MIN_MS         100   /* ms below thr to arm impact watcher*/
+#define FALL_IMPACT_MG_DEFAULT       2500  /* mag above this = impact           */
+#define FALL_IMPACT_WINDOW_MS        800   /* ms after free-fall to see impact  */
+#define FALL_STILL_MAD_MG            30    /* MAD-of-mag below this for stillness */
+#define FALL_STILL_MIN_MS            1500  /* ms still after impact → confirm   */
+#define FALL_STILL_WINDOW_MS         5000  /* ms after impact to find stillness */
+#define FALL_CONFIRMED_HOLD_MS       60000 /* auto-clear FALL_CONFIRMED back to IDLE */
+#define FALL_EVENT_RING_SIZE         16
+#define FALL_MAD_WIN_SAMPLES         100   /* 1 s @ 100 Hz                      */
+
 /* ── Slouch detection (gravity pitch vs baseline) ─────────────────────────── */
 #define SLOUCH_BASELINE_DEG_X10_DEFAULT  0    /* deg×10; assumes Z-up neutral  */
 #define SLOUCH_THRESH_DEG_DEFAULT        15   /* deg deviation gate            */

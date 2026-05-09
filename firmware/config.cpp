@@ -7,6 +7,7 @@
 #include "mode.h"
 #include "cough.h"
 #include "slouch.h"
+#include "fall.h"
 #include <Preferences.h>
 #include <Arduino.h>
 #include <string.h>
@@ -55,6 +56,8 @@ static void load_defaults(void)
     s_cfg.slouch_baseline_deg_x10 = SLOUCH_BASELINE_DEG_X10_DEFAULT;
     s_cfg.slouch_thresh_deg       = SLOUCH_THRESH_DEG_DEFAULT;
     s_cfg.slouch_sustain_sec      = SLOUCH_SUSTAIN_SEC_DEFAULT;
+    s_cfg.fall_freefall_mg        = FALL_FREEFALL_MG_DEFAULT;
+    s_cfg.fall_impact_mg          = FALL_IMPACT_MG_DEFAULT;
 }
 
 void cfg_load(void)
@@ -99,6 +102,8 @@ void cfg_load(void)
     if (s_prefs.isKey("sl_base"))      s_cfg.slouch_baseline_deg_x10 = s_prefs.getShort("sl_base", s_cfg.slouch_baseline_deg_x10);
     if (s_prefs.isKey("sl_thr"))       s_cfg.slouch_thresh_deg       = s_prefs.getUChar("sl_thr",  s_cfg.slouch_thresh_deg);
     if (s_prefs.isKey("sl_sus"))       s_cfg.slouch_sustain_sec      = s_prefs.getUChar("sl_sus",  s_cfg.slouch_sustain_sec);
+    if (s_prefs.isKey("fl_ff"))        s_cfg.fall_freefall_mg        = s_prefs.getUShort("fl_ff",  s_cfg.fall_freefall_mg);
+    if (s_prefs.isKey("fl_imp"))       s_cfg.fall_impact_mg          = s_prefs.getUShort("fl_imp", s_cfg.fall_impact_mg);
     s_prefs.end();
 }
 
@@ -143,6 +148,8 @@ void cfg_save(void)
     s_prefs.putShort("sl_base",       s_cfg.slouch_baseline_deg_x10);
     s_prefs.putUChar("sl_thr",        s_cfg.slouch_thresh_deg);
     s_prefs.putUChar("sl_sus",        s_cfg.slouch_sustain_sec);
+    s_prefs.putUShort("fl_ff",        s_cfg.fall_freefall_mg);
+    s_prefs.putUShort("fl_imp",       s_cfg.fall_impact_mg);
     s_prefs.end();
 }
 
@@ -180,4 +187,6 @@ void cfg_apply(void)
     slouch_set_thresh_deg(s_cfg.slouch_thresh_deg);
     slouch_set_sustain_sec(s_cfg.slouch_sustain_sec);
     slouch_set_baseline_deg_x10(s_cfg.slouch_baseline_deg_x10);
+    fall_set_freefall_mg(s_cfg.fall_freefall_mg);
+    fall_set_impact_mg(s_cfg.fall_impact_mg);
 }

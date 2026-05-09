@@ -55,6 +55,9 @@ typedef struct {
     int16_t  slouch_baseline_deg_x10;
     uint8_t  slouch_thresh_deg;
     uint8_t  slouch_sustain_sec;
+    /* Fall detection */
+    uint16_t fall_freefall_mg;
+    uint16_t fall_impact_mg;
 } cfg_t;
 
 void   cfg_load(void);
