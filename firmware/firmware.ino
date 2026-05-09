@@ -53,7 +53,12 @@ static uint32_t last_step_count   = 0;
 
 static int16_t last_x_mg = 0, last_y_mg = 0, last_z_mg = 0, last_mag_mg = 0;
 
-static const uint16_t SAMPLE_PERIOD_MS = 1000U / ACCEL_ODR_HZ;
+/* Sample loop runs at ACCEL_FAST_ODR_HZ (100 Hz). Resp/steps/wear, calibrated
+ * at ACCEL_ODR_HZ (25 Hz), are decimated 1-in-DECIM via s_decim_n. Cough+fall
+ * (commits 2 & 4) consume every tick. */
+static const uint16_t SAMPLE_PERIOD_MS = 1000U / ACCEL_FAST_ODR_HZ;
+static const uint8_t  SAMPLE_DECIM     = ACCEL_FAST_ODR_HZ / ACCEL_ODR_HZ;
+static uint8_t        s_decim_n        = 0;
 
 /* ── Tiny JSON-body helpers (no ArduinoJson dependency) ─────────────────── */
 static int kv_int(const String &b, const char *key, int dflt)
@@ -491,12 +496,17 @@ static void handle_config_post(void)
     handle_config_get();
 }
 
-/* ── /mode POST ─────────────────────────────────────────────────────────── */
+/* ── /mode POST — accepts off|normal|turbo|auto, persisted to NVS ───────── */
 static void handle_mode_post(void)
 {
     String body = http.arg("plain");
     String s = kv_str(body, "mode");
-    if (s.length() > 0) mode_set(mode_from_str(s.c_str()));
+    if (s.length() > 0) {
+        app_mode_t m = mode_from_str(s.c_str());
+        mode_set(m);
+        cfg_get()->mode = (uint8_t)m;
+        cfg_save();
+    }
     char buf[40];
     snprintf(buf, sizeof(buf), "{\"mode\":\"%s\"}", mode_str(mode_get()));
     http.send(200, "application/json", buf);
@@ -954,7 +964,7 @@ void setup(void)
     find_init();
     voice_init();
     stt_init();
-    mode_set(APP_MODE_NORMAL);
+    /* mode is already restored from NVS via cfg_apply() above. */
     battsim_set(80, false, false);
 
     Serial.println(F("[bench] modules ready"));
@@ -996,15 +1006,21 @@ void loop(void)
         accel_read_mg(&last_x_mg, &last_y_mg, &last_z_mg);
         last_mag_mg = mag_mg(last_x_mg, last_y_mg, last_z_mg);
 
-        /* Feed wear v2 every sample, before the on-body gate, so the
-         * variance + gravity-vector trackers can wake the device from
-         * OFF-BODY. */
-        wear_feed_sample(last_x_mg, last_y_mg, last_z_mg, last_mag_mg);
+        /* 100 Hz consumers (cough, fall) hook here in commits 2 & 4. */
 
-        if (wear_get_state() == WEAR_STATE_ON_BODY) {
-            resp_add_sample(last_x_mg, last_y_mg, last_z_mg);
-            steps_add_sample(last_x_mg, last_y_mg, last_z_mg);
+        /* 25 Hz consumers — wear v2 / resp / steps decimated 1-in-4. */
+        if (s_decim_n == 0) {
+            /* Feed wear v2 every 25-Hz tick, before the on-body gate, so the
+             * variance + gravity-vector trackers can wake the device from
+             * OFF-BODY. */
+            wear_feed_sample(last_x_mg, last_y_mg, last_z_mg, last_mag_mg);
+
+            if (wear_get_state() == WEAR_STATE_ON_BODY) {
+                resp_add_sample(last_x_mg, last_y_mg, last_z_mg);
+                steps_add_sample(last_x_mg, last_y_mg, last_z_mg);
+            }
         }
+        if (++s_decim_n >= SAMPLE_DECIM) s_decim_n = 0;
     }
 
     /* Respiration autocorr runs at most every RESP_AUTOCORR_PERIOD_MS;

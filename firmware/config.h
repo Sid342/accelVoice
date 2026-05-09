@@ -45,6 +45,8 @@ typedef struct {
     char     wifi_ssid[CFG_WIFI_FIELD_LEN];
     char     wifi_pass[CFG_WIFI_FIELD_LEN];
     bool     wifi_sta_enabled;
+    /* App mode (persisted across boots) */
+    uint8_t  mode;                     /* app_mode_t cast; default APP_MODE_AUTO */
 } cfg_t;
 
 void   cfg_load(void);

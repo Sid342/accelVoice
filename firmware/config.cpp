@@ -4,6 +4,7 @@
 #include "accel.h"
 #include "steps.h"
 #include "respiration.h"
+#include "mode.h"
 #include <Preferences.h>
 #include <Arduino.h>
 #include <string.h>
@@ -45,6 +46,7 @@ static void load_defaults(void)
     memset(s_cfg.wifi_ssid, 0, CFG_WIFI_FIELD_LEN);
     memset(s_cfg.wifi_pass, 0, CFG_WIFI_FIELD_LEN);
     s_cfg.wifi_sta_enabled = false;
+    s_cfg.mode             = APP_MODE_AUTO;
 }
 
 void cfg_load(void)
@@ -82,6 +84,7 @@ void cfg_load(void)
     if (s_prefs.isKey("wssid"))        s_prefs.getString("wssid", s_cfg.wifi_ssid, CFG_WIFI_FIELD_LEN);
     if (s_prefs.isKey("wpass"))        s_prefs.getString("wpass", s_cfg.wifi_pass, CFG_WIFI_FIELD_LEN);
     if (s_prefs.isKey("wsta_en"))      s_cfg.wifi_sta_enabled = s_prefs.getBool("wsta_en", false);
+    if (s_prefs.isKey("app_mode"))     s_cfg.mode             = s_prefs.getUChar("app_mode", APP_MODE_AUTO);
     s_prefs.end();
 }
 
@@ -119,6 +122,7 @@ void cfg_save(void)
     s_prefs.putString("wssid",        s_cfg.wifi_ssid);
     s_prefs.putString("wpass",        s_cfg.wifi_pass);
     s_prefs.putBool("wsta_en",        s_cfg.wifi_sta_enabled);
+    s_prefs.putUChar("app_mode",      s_cfg.mode);
     s_prefs.end();
 }
 
@@ -148,4 +152,6 @@ void cfg_apply(void)
     resp_set_hysteresis_mg(s_cfg.resp_hysteresis_mg);
     resp_set_adaptive_bp(s_cfg.resp_adaptive_bp);
     resp_set_autocorr_window_sec(s_cfg.resp_autocorr_window_sec);
+    if (s_cfg.mode > APP_MODE_AUTO) s_cfg.mode = APP_MODE_AUTO;
+    mode_set((app_mode_t)s_cfg.mode);
 }

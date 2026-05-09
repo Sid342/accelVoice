@@ -7,7 +7,11 @@
 #define PIN_LED_STATUS    2     /* Onboard blue LED on most ESP32 DevKit V1   */
 
 /* ── Accelerometer / Wear detection ───────────────────────────────────────── */
-#define ACCEL_ODR_HZ            25    /* samples/sec during normal operation    */
+/* ACCEL_ODR_HZ is the legacy 25-Hz rate kept for resp/steps/wear pipelines.
+ * ACCEL_FAST_ODR_HZ is the new sample-loop rate; cough+fall consume every
+ * tick, while resp/steps/wear are decimated 1-in-(FAST/ODR). */
+#define ACCEL_ODR_HZ            25    /* samples/sec for resp+steps+wear feed   */
+#define ACCEL_FAST_ODR_HZ       100   /* sample-loop rate (drives cough + fall) */
 #define ACCEL_MOTION_THRESH_MG  50    /* mg — motion threshold for wear detect  */
 #define ACCEL_STILL_SEC         5     /* seconds stationary → off-body suspect  */
 #define ACCEL_OFFBODY_SEC       30    /* seconds off-body → adaptive output     */

@@ -114,6 +114,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   </div>
   <nav id="tabnav">
     <button data-tab="live"    class="active">Live</button>
+    <button data-tab="device">Device</button>
     <button data-tab="breath">Breath</button>
     <button data-tab="step">Step</button>
     <button data-tab="tune">Tune</button>
@@ -380,17 +381,27 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   </div>
 </div>
 
-<!-- ─────────────── SYSTEM ─────────────── -->
-<div class="tab" id="tab-system">
+<!-- ─────────────── DEVICE ─────────────── -->
+<div class="tab" id="tab-device">
   <div class="section">
-    <h2>Mode + Wear override</h2>
+    <h2>Mode <span class="hint">— OFF / NORMAL / TURBO / AUTO (persisted)</span></h2>
+    <div class="actions" id="modeBtns">
+      <button class="btn" data-mode="off">OFF</button>
+      <button class="btn" data-mode="normal">NORMAL</button>
+      <button class="btn" data-mode="turbo">TURBO</button>
+      <button class="btn" data-mode="auto">AUTO</button>
+    </div>
+    <div class="modeline" style="margin-top:10px">
+      <span class="dot" id="ionDot"></span>
+      <span>Current ionizer:</span>
+      <strong id="ionTxt" style="color:var(--dim)">…</strong>
+    </div>
+    <div class="note">AUTO follows wear (on-body=on). NORMAL/TURBO ignore wear (bench/lab). OFF disables. Battery override always wins.</div>
+  </div>
+
+  <div class="section">
+    <h2>Wear override</h2>
     <div class="modeline">
-      Mode:
-      <select id="modeSel">
-        <option value="off">OFF</option>
-        <option value="normal" selected>NORMAL</option>
-        <option value="turbo">TURBO</option>
-      </select>
       Wear:
       <select id="wearSel">
         <option value="auto" selected>auto (state machine)</option>
@@ -411,6 +422,23 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <span id="batSt" style="color:var(--dim)"></span>
     </div>
     <div class="note">≤ 5% → CRITICAL · ≤ 15% → LOW_BAT · charging or fault → override. Any non-OK → ionizer forced off.</div>
+  </div>
+</div>
+
+<!-- ─────────────── SYSTEM ─────────────── -->
+<div class="tab" id="tab-system">
+  <div class="section">
+    <h2>Device info</h2>
+    <div class="kv" id="sysKVMain">
+      <dt>Hostname</dt><dd>atovio.local</dd>
+      <dt>AP IP</dt><dd id="sysApIp">—</dd>
+      <dt>STA IP</dt><dd id="sysStaIp">—</dd>
+      <dt>STA RSSI</dt><dd id="sysRssi">—</dd>
+      <dt>Uptime</dt><dd id="sysUp">—</dd>
+      <dt>Build</dt><dd id="sysBuild2">—</dd>
+      <dt>Free heap</dt><dd id="sysHeap2">—</dd>
+      <dt>Chip</dt><dd id="sysChip2">—</dd>
+    </div>
   </div>
 
   <div class="section">
@@ -603,13 +631,14 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 <script>
 /* ── Tab switching ───────────────────────────────────────────────────────── */
-const TABS=['live','breath','step','tune','system','network','find','voice'];
+const TABS=['live','device','breath','step','tune','system','network','find','voice'];
 function showTab(name){
   TABS.forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===name);
     document.querySelector('#tabnav button[data-tab="'+t+'"]').classList.toggle('active',t===name);
   });
   if(name==='network'){fetchWifi();fetchSystem();}
+  if(name==='system'){fetchSystem();}
   if(name==='voice'){fetchVoice();fetchStt();}
   if(name==='breath'){drawRespWave();}
   if(name==='step'){drawStepTrace();}
@@ -728,7 +757,12 @@ async function tick(){
       if('step_adaptive' in d.cfg) document.getElementById('sAdapt').checked=d.cfg.step_adaptive;
       if('step_bandpass' in d.cfg) document.getElementById('sBp').checked=d.cfg.step_bandpass;
       if('step_amp_window_ms' in d.cfg) setSlider('sAmpW',d.cfg.step_amp_window_ms,'ms');
-      setSel('modeSel',d.mode);
+      highlightMode(d.mode);
+      const ionDot=document.getElementById('ionDot');
+      const ionTxt=document.getElementById('ionTxt');
+      if(ionDot){ionDot.className='dot '+(d.ionizer?'live':'');}
+      if(ionTxt){ionTxt.textContent=d.ionizer?'ON':'OFF';
+                 ionTxt.style.color=d.ionizer?'var(--green)':'var(--dim)';}
       setSel('wearSel',d.wear_forced);
       setSlider('batPct',d.battery.pct,'');
       document.getElementById('batChg').checked=d.battery.charging;
@@ -762,6 +796,9 @@ async function tick(){
     setText('staIp',d.net.sta_ip||'—');
     setText('staSsid',d.net.sta_ssid||'—');
     setText('staRssi',d.net.sta_rssi?d.net.sta_rssi+' dBm':'—');
+    /* System tab live mirrors */
+    setText('sysRssi',d.net.sta_rssi?d.net.sta_rssi+' dBm':'—');
+    setText('sysUp',d.uptime_s+' s');
     fail=0;
   }catch(e){
     fail++;document.getElementById('dot').className='dot err';
@@ -1093,7 +1130,15 @@ function gtEval(){fetch('/steps/eval?window_sec=30&tol_ms=300',{cache:'no-store'
   setText('evP',d.precision_pct+' %');setText('evR',d.recall_pct+' %');
 });}
 
-document.getElementById('modeSel').addEventListener('change',e=>{suppress();pj('/mode',JSON.stringify({mode:e.target.value}));});
+/* Mode buttons (Device tab) — POST /mode and rely on /data for highlight. */
+document.querySelectorAll('#modeBtns button[data-mode]').forEach(b=>{
+  b.addEventListener('click',()=>{suppress();pj('/mode',JSON.stringify({mode:b.dataset.mode}));});
+});
+function highlightMode(m){
+  document.querySelectorAll('#modeBtns button[data-mode]').forEach(b=>{
+    b.classList.toggle('act', b.dataset.mode===m);
+  });
+}
 document.getElementById('wearSel').addEventListener('change',e=>{suppress();pj('/wear/force',JSON.stringify({state:e.target.value}));});
 
 ['batPct','batChg','batFlt'].forEach(id=>{
@@ -1147,9 +1192,16 @@ function saveWifi(){
 async function fetchSystem(){
   try{
     const r=await fetch('/system',{cache:'no-store'});const d=await r.json();
+    /* Network tab fields */
     setText('sysBuild',d.build_date);
     setText('sysHeap',(d.free_heap/1024).toFixed(1)+' KB');
     setText('sysChip',d.chip_model+' · '+d.sdk);
+    /* System tab fields */
+    setText('sysApIp',d.ap_ip);
+    setText('sysStaIp',d.sta_ip||'—');
+    setText('sysBuild2',d.build_date);
+    setText('sysHeap2',(d.free_heap/1024).toFixed(1)+' KB');
+    setText('sysChip2',d.chip_model+' · '+d.sdk);
   }catch(e){}
 }
 
