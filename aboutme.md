@@ -44,9 +44,12 @@ driver config.
 
 ## Module map
 
-| File | Purpose |
+All firmware sources live under `firmware/`. Open that folder in the Arduino
+IDE; from `arduino-cli`, point at `firmware/` (see commands below).
+
+| File (under `firmware/`) | Purpose |
 |---|---|
-| `atovio-accel-bench-esp32.ino` | sketch entrypoint, HTTP routes, main loop |
+| `firmware.ino` | sketch entrypoint, HTTP routes, main loop |
 | `app_config.h` | compile-time defaults for every tunable |
 | `accel.cpp/.h` | MPU6050 init + sample loop |
 | `wear.cpp/.h` | on-body / off-body state machine |
@@ -68,8 +71,9 @@ driver config.
 ## Build + flash
 
 ```bash
-arduino-cli compile  --fqbn esp32:esp32:esp32:PartitionScheme=huge_app
-arduino-cli upload   --fqbn esp32:esp32:esp32:PartitionScheme=huge_app -p /dev/cu.SLAB_USBtoUART
+arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app firmware/
+arduino-cli upload  --fqbn esp32:esp32:esp32:PartitionScheme=huge_app \
+                    -p /dev/cu.SLAB_USBtoUART firmware/
 ```
 
 `huge_app` is required: app image with WiFi + BLE + HTTPClient + WiFiClientSecure
