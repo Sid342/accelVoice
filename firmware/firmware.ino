@@ -187,14 +187,26 @@ static void handle_data2(void)
         "{\"wear\":{\"var\":%d,\"var_thr\":%u,\"grav\":%d,\"grav_thr\":%u,\"signal\":\"%s\"},"
         "\"resp\":{\"mean\":%d,\"instant_bpm\":%u,\"total_events\":%lu,"
                  "\"min_interval_ms\":%u,\"iir_alpha\":%u},"
-        "\"steps\":{\"signal\":0,\"threshold\":0,\"total_events\":0,\"gt_count\":0,"
-                  "\"adaptive\":false,\"bandpass\":false,\"axis\":\"mag\"}}",
+        "\"steps\":{\"signal\":%d,\"threshold\":%d,\"baseline\":%d,"
+                  "\"total_events\":%lu,\"gt_count\":%u,"
+                  "\"adaptive\":%s,\"bandpass\":%s,\"axis\":\"%s\","
+                  "\"amp_window_ms\":%u}}",
         wear_current_var_mg(), wear_get_var_thresh_mg(),
         wear_current_grav_diff_mg(), wear_get_grav_diff_thresh_mg(),
         wear_last_signal(),
         resp_current_mean_mg(), resp_instant_bpm(),
         (unsigned long)resp_total_events(),
-        resp_get_min_interval_ms(), resp_get_iir_alpha_q15());
+        resp_get_min_interval_ms(), resp_get_iir_alpha_q15(),
+        steps_current_signal(), steps_current_threshold(),
+        steps_current_baseline(),
+        (unsigned long)steps_total_events(),
+        (unsigned)steps_get_groundtruth_count(),
+        steps_get_adaptive() ? "true" : "false",
+        steps_get_bandpass() ? "true" : "false",
+        (steps_get_axis() == STEP_AXIS_X) ? "x" :
+        (steps_get_axis() == STEP_AXIS_Y) ? "y" :
+        (steps_get_axis() == STEP_AXIS_Z) ? "z" : "mag",
+        steps_get_amp_window_ms());
     http.sendHeader("Cache-Control", "no-store");
     http.send(200, "application/json", buf);
 }
@@ -222,6 +234,79 @@ static void handle_resp_events(void)
     body += "]}";
     http.sendHeader("Cache-Control", "no-store");
     http.send(200, "application/json", body);
+}
+
+/* ── /steps/events?since=<ms> — JSON array of step events ─────────────── */
+static void handle_steps_events(void)
+{
+    String s = http.arg("since");
+    uint32_t since = (uint32_t)s.toInt();
+    step_event_t evts[32];
+    size_t n = steps_get_events_since(since, evts, sizeof(evts)/sizeof(evts[0]));
+
+    String body;
+    body.reserve(80 + n * 48);
+    body  = "{\"now\":";    body += (uint32_t)millis();
+    body += ",\"total\":";  body += (uint32_t)steps_total_events();
+    body += ",\"signal\":"; body += (int32_t)steps_current_signal();
+    body += ",\"thr\":";    body += (int32_t)steps_current_threshold();
+    body += ",\"events\":[";
+    for (size_t i = 0; i < n; i++) {
+        if (i) body += ',';
+        body += "{\"t\":";   body += (uint32_t)evts[i].t_ms;
+        body += ",\"amp\":"; body += (int32_t)evts[i].amplitude_mg;
+        body += ",\"int\":"; body += (uint32_t)evts[i].interval_ms;
+        body += '}';
+    }
+    body += "]}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
+}
+
+/* ── /steps/groundtruth — POST=tap, GET=count ─────────────────────────── */
+static void handle_steps_gt_post(void)
+{
+    steps_groundtruth_tap(millis());
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"count\":%u}",
+             (unsigned)steps_get_groundtruth_count());
+    http.send(200, "application/json", buf);
+}
+static void handle_steps_gt_get(void)
+{
+    char buf[80];
+    snprintf(buf, sizeof(buf), "{\"count\":%u}",
+             (unsigned)steps_get_groundtruth_count());
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
+}
+static void handle_steps_gt_clear(void)
+{
+    steps_groundtruth_clear();
+    http.send(200, "application/json", "{\"count\":0}");
+}
+
+/* ── /steps/eval?window_sec=&tol_ms= ───────────────────────────────────── */
+static void handle_steps_eval(void)
+{
+    int win  = http.hasArg("window_sec") ? http.arg("window_sec").toInt() : 30;
+    int tol  = http.hasArg("tol_ms")     ? http.arg("tol_ms").toInt()     : 300;
+    if (win < 1)    win = 1;
+    if (win > 3600) win = 3600;
+    if (tol < 50)   tol = 50;
+    if (tol > 2000) tol = 2000;
+    uint32_t det = 0, gt = 0, m = 0;
+    uint16_t prec = 0, recall = 0;
+    steps_eval((uint16_t)win, (uint16_t)tol, &det, &gt, &m, &prec, &recall);
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+             "{\"window_sec\":%d,\"tol_ms\":%d,\"detected\":%lu,\"groundtruth\":%lu,"
+             "\"matched\":%lu,\"precision_pct\":%u,\"recall_pct\":%u}",
+             win, tol,
+             (unsigned long)det, (unsigned long)gt, (unsigned long)m,
+             prec, recall);
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
 }
 
 /* ── /resp/wave?n=<N> — last N samples of (z, mean) ────────────────────── */
@@ -255,12 +340,20 @@ static void handle_config_get(void)
              "{\"motion_thresh_mg\":%u,\"still_sec\":%u,\"offbody_sec\":%u,"
              "\"wear_var_thresh_mg\":%u,\"wear_grav_diff_thresh_mg\":%u,"
              "\"step_thresh_mg\":%u,\"step_min_ms\":%u,\"step_max_ms\":%u,"
+             "\"step_adaptive\":%s,\"step_bandpass\":%s,"
+             "\"step_axis\":\"%s\",\"step_amp_window_ms\":%u,"
              "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
              "\"resp_min_interval_ms\":%u,\"resp_iir_alpha_q15\":%u,"
              "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}",
              c->motion_thresh_mg, c->still_sec, c->offbody_sec,
              c->wear_var_thresh_mg, c->wear_grav_diff_thresh_mg,
              c->step_thresh_mg, c->step_min_ms, c->step_max_ms,
+             c->step_adaptive ? "true" : "false",
+             c->step_bandpass ? "true" : "false",
+             (c->step_axis == 1) ? "x" :
+             (c->step_axis == 2) ? "y" :
+             (c->step_axis == 3) ? "z" : "mag",
+             c->step_amp_window_ms,
              c->bpm_min, c->bpm_max, c->resp_window_sec,
              c->resp_min_interval_ms, c->resp_iir_alpha_q15,
              c->cal_x_mg, c->cal_y_mg, c->cal_z_mg);
@@ -287,6 +380,23 @@ static void handle_config_post(void)
     if (v >= 50 && v <= 5000) c->step_min_ms = v;
     v = kv_int(body, "step_max_ms", -1);
     if (v >= 100 && v <= 10000) c->step_max_ms = v;
+    {
+        String pat = "\"step_adaptive\"";
+        if (body.indexOf(pat) >= 0) c->step_adaptive = kv_bool(body, "step_adaptive", c->step_adaptive);
+        pat = "\"step_bandpass\"";
+        if (body.indexOf(pat) >= 0) c->step_bandpass = kv_bool(body, "step_bandpass", c->step_bandpass);
+    }
+    {
+        String ax = kv_str(body, "step_axis");
+        if (ax.length() > 0) {
+            if      (ax == "x")   c->step_axis = 1;
+            else if (ax == "y")   c->step_axis = 2;
+            else if (ax == "z")   c->step_axis = 3;
+            else if (ax == "mag") c->step_axis = 0;
+        }
+    }
+    v = kv_int(body, "step_amp_window_ms", -1);
+    if (v >= 500 && v <= 5000) c->step_amp_window_ms = v;
     v = kv_int(body, "bpm_min", -1);
     if (v >= 1 && v <= 30) c->bpm_min = v;
     v = kv_int(body, "bpm_max", -1);
@@ -699,6 +809,11 @@ static void http_start(void)
     http.on("/data2",            HTTP_GET,  handle_data2);
     http.on("/resp/events",      HTTP_GET,  handle_resp_events);
     http.on("/resp/wave",        HTTP_GET,  handle_resp_wave);
+    http.on("/steps/events",     HTTP_GET,  handle_steps_events);
+    http.on("/steps/groundtruth", HTTP_POST, handle_steps_gt_post);
+    http.on("/steps/groundtruth", HTTP_GET,  handle_steps_gt_get);
+    http.on("/steps/groundtruth/clear", HTTP_POST, handle_steps_gt_clear);
+    http.on("/steps/eval",       HTTP_GET,  handle_steps_eval);
     http.on("/config",           HTTP_GET,  handle_config_get);
     http.on("/config",           HTTP_POST, handle_config_post);
     http.on("/mode",             HTTP_POST, handle_mode_post);

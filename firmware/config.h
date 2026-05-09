@@ -16,6 +16,11 @@ typedef struct {
     uint16_t step_thresh_mg;
     uint16_t step_min_ms;
     uint16_t step_max_ms;
+    /* Steps v2 */
+    bool     step_adaptive;
+    bool     step_bandpass;
+    uint8_t  step_axis;            /* 0=mag 1=x 2=y 3=z */
+    uint16_t step_amp_window_ms;
     /* Respiration */
     uint8_t  bpm_min;
     uint8_t  bpm_max;

@@ -130,7 +130,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <h2>Live readings</h2>
     <div class="cards">
       <div class="card"><div class="lbl">Wear</div><div id="w" class="val off">…</div><div class="sub" id="ws">—</div><div class="sub" id="wsig" style="font-size:11px;opacity:0.7">—</div></div>
-      <div class="card"><div class="lbl">Steps</div><div id="st" class="val">0</div><div class="sub" id="cad">—</div></div>
+      <div class="card"><div class="lbl">Steps</div><div id="st" class="val">0</div><div class="sub" id="cad">—</div><div class="sub" id="cadx" style="font-size:11px;opacity:0.7">—</div></div>
       <div class="card" id="bpmcard"><div class="lbl">Respiration</div><div id="bpm" class="val">0</div><div class="sub" id="bsub">—</div></div>
       <div class="card"><div class="lbl">Ionizer (sim)</div><div id="ion" class="val off">OFF</div><div class="sub" id="isub">—</div></div>
     </div>
@@ -189,7 +189,46 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <div class="row"><label>Max interval (slow)</label>
       <input type="range" id="stpMax" min="800" max="3000" step="50" value="1500">
       <span id="stpMaxV" class="num">1500 ms</span></div>
-    <div class="note">|mag − baseline| &gt; threshold → peak. Counts only if min ≤ time-since-last ≤ max.</div>
+    <div class="row"><label>Detection axis (v2)</label>
+      <select id="sAxis"><option value="mag">|mag|</option><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
+    </div>
+    <div class="modeline">
+      <label><input type="checkbox" id="sAdapt" onchange="sToggle('step_adaptive',this.checked)"> Adaptive threshold (v2)</label>
+      <label style="margin-left:16px"><input type="checkbox" id="sBp" onchange="sToggle('step_bandpass',this.checked)"> Bandpass IIR (0.5–3 Hz)</label>
+    </div>
+    <div class="row"><label>Adaptive window (v2)</label>
+      <input type="range" id="sAmpW" min="500" max="5000" step="100" value="2000">
+      <span id="sAmpWV" class="num">2000 ms</span></div>
+    <div class="note">|mag − baseline| &gt; threshold → peak. Counts only if min ≤ time-since-last ≤ max.
+      <strong>Adaptive</strong> sets threshold = max(80 mg, 50 % × peak-to-peak amplitude over the
+      adaptive window) — auto-calibrates per user. <strong>Bandpass</strong> replaces the slow-EMA
+      baseline with a 0.5–3 Hz IIR filter, killing typing/clapping/driving noise.</div>
+    <div style="margin-top:12px">
+      <div class="lbl">Step trace <span class="hint">— blue = signal, red dashed = effective threshold, green ticks = detected steps, yellow ticks = ground truth</span></div>
+      <canvas id="stepTrace" width="900" height="140" style="background:#0e1116;border-radius:6px;margin-top:6px;width:100%"></canvas>
+    </div>
+    <div class="kv" style="margin-top:8px">
+      <dt>Effective threshold</dt><dd id="sThr">—</dd>
+      <dt>Total events</dt><dd id="sTot">0</dd>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Step ground truth + eval</h2>
+    <button class="btn primary" onclick="gtTap()" style="width:100%;height:64px;font-size:18px">TAP on each real step</button>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn warn" onclick="gtClear()">Clear taps</button>
+      <button class="btn act"  onclick="gtEval()">Eval (last 30 s, ±300 ms)</button>
+      <span class="num" style="font-size:13px;margin-left:8px">taps: <span id="gtCount">0</span></span>
+    </div>
+    <div id="gtResult" class="kv" style="margin-top:10px">
+      <dt>Detected</dt><dd id="evDet">—</dd>
+      <dt>Ground truth</dt><dd id="evGt">—</dd>
+      <dt>Matched</dt><dd id="evM">—</dd>
+      <dt>Precision</dt><dd id="evP">—</dd>
+      <dt>Recall</dt><dd id="evR">—</dd>
+    </div>
+    <div class="note">Tap the button on every <em>real</em> step you take. Then walk a known count, then hit Eval. Greedy nearest-match within tolerance ms. Precision = matched / detected · Recall = matched / groundtruth.</div>
   </div>
 
   <div class="section">
@@ -569,6 +608,10 @@ async function tick(){
       setSlider('respWin',d.cfg.resp_window_sec,'s');
       if('resp_min_interval_ms' in d.cfg) setSlider('rMin',d.cfg.resp_min_interval_ms,'ms');
       if('resp_iir_alpha_q15' in d.cfg) setSlider('rAlpha',d.cfg.resp_iir_alpha_q15,d.cfg.resp_iir_alpha_q15>3000?'(fast)':'(slow)');
+      if('step_axis' in d.cfg) setSel('sAxis',d.cfg.step_axis);
+      if('step_adaptive' in d.cfg) document.getElementById('sAdapt').checked=d.cfg.step_adaptive;
+      if('step_bandpass' in d.cfg) document.getElementById('sBp').checked=d.cfg.step_bandpass;
+      if('step_amp_window_ms' in d.cfg) setSlider('sAmpW',d.cfg.step_amp_window_ms,'ms');
       setSel('modeSel',d.mode);
       setSel('wearSel',d.wear_forced);
       setSlider('batPct',d.battery.pct,'');
@@ -624,9 +667,78 @@ async function tick2(){
       setText('rTot',  d.resp.total_events);
       setText('rMean', d.resp.mean+' mg');
     }
+    if(d.steps){
+      setText('sThr', d.steps.threshold+' mg');
+      setText('sTot', d.steps.total_events);
+      setText('gtCount', d.steps.gt_count);
+      /* push to step trace ring */
+      stepTrace.push({t:Date.now(), s:d.steps.signal, thr:d.steps.threshold});
+      while(stepTrace.length>60) stepTrace.shift();
+      setText('cadx','thr '+d.steps.threshold+' mg · evt '+d.steps.total_events);
+    }
   }catch(e){}
 }
 setInterval(tick2,1000);tick2();
+
+/* ── Step trace (Tune tab) — rolling 60 s ────────────────────────────── */
+const stepTrace=[];const stepMarks=[];const gtMarks=[];let stepLastEvtT=0;
+async function drawStepTrace(){
+  if(!document.getElementById('tab-tune').classList.contains('active'))return;
+  const cv=document.getElementById('stepTrace');if(!cv)return;
+  /* fetch new events */
+  try{
+    const r=await fetch('/steps/events?since='+stepLastEvtT,{cache:'no-store'});
+    const d=await r.json();
+    if(d.events&&d.events.length){
+      const nowAbs=Date.now();
+      d.events.forEach(e=>stepMarks.push({t:e.t,added:nowAbs}));
+      stepLastEvtT=d.events[d.events.length-1].t;
+    }
+  }catch(e){}
+  /* prune old marks */
+  const cutMs=Date.now()-60000;
+  while(stepMarks.length&&stepMarks[0].added<cutMs)stepMarks.shift();
+  while(gtMarks.length&&gtMarks[0]<cutMs)gtMarks.shift();
+  /* draw */
+  const ctx=cv.getContext('2d');const W=cv.width,H=cv.height;
+  ctx.clearRect(0,0,W,H);ctx.fillStyle='#0e1116';ctx.fillRect(0,0,W,H);
+  if(stepTrace.length<2)return;
+  /* y range from signal vs threshold */
+  let mn=Infinity,mx=-Infinity;
+  stepTrace.forEach(p=>{if(p.s<mn)mn=p.s;if(p.s>mx)mx=p.s;if(p.thr<mn)mn=p.thr;if(p.thr>mx)mx=p.thr;});
+  if(mx-mn<20){mx=mn+20;}
+  /* include 0 line */
+  if(mn>0)mn=0;if(mx<0)mx=0;
+  const pad=4;const yScale=(H-2*pad)/(mx-mn);
+  /* time axis: 60 s window */
+  const nowMs=Date.now();const winMs=60000;
+  const xOf=t=>W*(1-(nowMs-t)/winMs);
+  /* zero line */
+  const yZero=H-pad-(0-mn)*yScale;
+  ctx.strokeStyle='#374151';ctx.setLineDash([2,3]);ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(0,yZero);ctx.lineTo(W,yZero);ctx.stroke();ctx.setLineDash([]);
+  /* threshold line (red dashed) */
+  ctx.strokeStyle='#e58383';ctx.setLineDash([4,4]);ctx.lineWidth=1.5;ctx.beginPath();
+  for(let i=0;i<stepTrace.length;i++){
+    const p=stepTrace[i];const x=xOf(p.t),y=H-pad-(p.thr-mn)*yScale;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();ctx.setLineDash([]);
+  /* signal line (blue) */
+  ctx.strokeStyle='#5aa9ff';ctx.lineWidth=1.5;ctx.beginPath();
+  for(let i=0;i<stepTrace.length;i++){
+    const p=stepTrace[i];const x=xOf(p.t),y=H-pad-(p.s-mn)*yScale;
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+  /* detected event ticks (green) */
+  ctx.strokeStyle='#5fdc7a';ctx.lineWidth=2;
+  stepMarks.forEach(m=>{const x=xOf(m.added);if(x<0||x>W)return;ctx.beginPath();ctx.moveTo(x,H-2);ctx.lineTo(x,H-22);ctx.stroke();});
+  /* GT ticks (yellow) */
+  ctx.strokeStyle='#facc15';ctx.lineWidth=2;
+  gtMarks.forEach(t=>{const x=xOf(t);if(x<0||x>W)return;ctx.beginPath();ctx.moveTo(x,2);ctx.lineTo(x,22);ctx.stroke();});
+}
+setInterval(drawStepTrace,500);
 
 /* ── Breath waveform (Tune tab) ──────────────────────────────────────────── */
 let respLastEvtT=0;let respMarks=[];
@@ -708,6 +820,16 @@ bindSlider('wVar','mg','wear_var_thresh_mg');
 bindSlider('wGrav','mg','wear_grav_diff_thresh_mg');
 bindSlider('rMin','ms','resp_min_interval_ms');
 bindSlider('rAlpha','','resp_iir_alpha_q15');
+bindSlider('sAmpW','ms','step_amp_window_ms');
+
+document.getElementById('sAxis').addEventListener('change',e=>{suppress();pj('/config',JSON.stringify({step_axis:e.target.value}));});
+function sToggle(key,en){suppress();const b={};b[key]=en;pj('/config',JSON.stringify(b));}
+function gtTap(){gtMarks.push(Date.now());pj('/steps/groundtruth','{}').then(r=>r.json()).then(d=>{setText('gtCount',d.count);});}
+function gtClear(){gtMarks.length=0;pj('/steps/groundtruth/clear','{}').then(r=>r.json()).then(d=>{setText('gtCount',d.count);});}
+function gtEval(){fetch('/steps/eval?window_sec=30&tol_ms=300',{cache:'no-store'}).then(r=>r.json()).then(d=>{
+  setText('evDet',d.detected);setText('evGt',d.groundtruth);setText('evM',d.matched);
+  setText('evP',d.precision_pct+' %');setText('evR',d.recall_pct+' %');
+});}
 
 document.getElementById('modeSel').addEventListener('change',e=>{suppress();pj('/mode',JSON.stringify({mode:e.target.value}));});
 document.getElementById('wearSel').addEventListener('change',e=>{suppress();pj('/wear/force',JSON.stringify({state:e.target.value}));});
