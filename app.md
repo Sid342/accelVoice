@@ -23,6 +23,14 @@ TLS — because this device only ever lives on the bench network.
 |---|---|---|---|
 | GET | `/` | — | embedded HTML UI |
 | GET | `/data` | — | full live snapshot JSON (see schema below) |
+| GET | `/data2` | — | extended diagnostics for v2 features (wear / resp / steps) |
+| GET | `/resp/events` | `?since=<ms>` | `{now,total,events:[{t,amp,int}…]}` |
+| GET | `/resp/wave` | `?n=<N>` | `{n,z:[…],m:[…]}` — paired Z + running mean |
+| GET | `/steps/events` | `?since=<ms>` | `{now,total,signal,thr,events:[…]}` |
+| POST | `/steps/groundtruth` | `{}` | record a tap; returns `{count}` |
+| GET | `/steps/groundtruth` | — | `{count}` |
+| POST | `/steps/groundtruth/clear` | `{}` | empty the GT ring |
+| GET | `/steps/eval` | `?window_sec=&tol_ms=` | `{detected,groundtruth,matched,precision_pct,recall_pct}` |
 | GET | `/config` | — | tunable thresholds JSON |
 | POST | `/config` | tunables JSON | applies + persists, returns same shape |
 | POST | `/mode` | `{"mode":"off|normal|turbo"}` | new mode |
@@ -150,8 +158,10 @@ NVS** under namespace `cfg` unless noted. Compile-time defaults live in
 | Name | Default | Range | Unit | Persists | Lives in |
 |---|---:|---|---|---|---|
 | `motion_thresh_mg` | 50 | 10–510 | mg | yes | `cfg` |
-| `still_sec` | 5 | 1–30 | s | yes | `cfg` |
 | `offbody_sec` | 30 | 5–300 | s | yes | `cfg` |
+| `wear_var_thresh_mg` | 5 | 1–50 | mg | yes | `cfg` |
+| `wear_grav_diff_thresh_mg` | 20 | 5–200 | mg | yes | `cfg` |
+| `still_sec` | 5 | 1–30 | s (retired by v2) | yes | `cfg` |
 | `cal_x_mg` / `cal_y_mg` / `cal_z_mg` | 0 | ±2000 | mg | yes | `cfg` |
 | `wear_force` | auto | auto/on/off | — | no (volatile) | RAM |
 
@@ -162,6 +172,10 @@ NVS** under namespace `cfg` unless noted. Compile-time defaults live in
 | `step_thresh_mg` | 200 | 50–1000 | mg above gravity | yes | `cfg` |
 | `step_min_ms` | 300 | 50–5000 | ms | yes | `cfg` |
 | `step_max_ms` | 1500 | 100–10000 | ms | yes | `cfg` |
+| `step_adaptive` | false | bool | — | yes | `cfg` |
+| `step_bandpass` | false | bool | — | yes | `cfg` |
+| `step_axis` | mag | mag/x/y/z | — | yes | `cfg` |
+| `step_amp_window_ms` | 2000 | 500–5000 | ms | yes | `cfg` |
 
 ### Respiration
 
@@ -170,6 +184,8 @@ NVS** under namespace `cfg` unless noted. Compile-time defaults live in
 | `bpm_min` | 8 | 1–30 | BPM | yes | `cfg` |
 | `bpm_max` | 30 | 5–60 | BPM | yes | `cfg` |
 | `resp_window_sec` | 10 | 5–15 | s | yes | `cfg` |
+| `resp_min_interval_ms` | 2000 | 1000–7500 | ms | yes | `cfg` |
+| `resp_iir_alpha_q15` | 1638 | 100–8192 | Q15 | yes | `cfg` |
 
 ### Voice capture
 

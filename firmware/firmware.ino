@@ -182,7 +182,7 @@ static void handle_data(void)
 /* ── /data2 — extended diagnostic snapshot for v2 features ─────────────── */
 static void handle_data2(void)
 {
-    char buf[768];
+    char buf[1024];
     snprintf(buf, sizeof(buf),
         "{\"wear\":{\"var\":%d,\"var_thr\":%u,\"grav\":%d,\"grav_thr\":%u,\"signal\":\"%s\"},"
         "\"resp\":{\"mean\":%d,\"instant_bpm\":%u,\"total_events\":%lu,"

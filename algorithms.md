@@ -74,40 +74,53 @@ Lowering the IRQ threshold doesn't rescue this:
 
 The right fix is to use a **different signal**, not a smaller threshold.
 
-### Better signals (proposed v2 — not yet implemented)
+### v2 (shipped) — three signals OR'd
 
-| Signal | Worn (still body) | On a desk | Cost |
+`firmware/wear.cpp` now computes three signals; **any one** keeps the device
+ON-BODY. None of three for `offbody_sec` consecutive seconds → OFF-BODY.
+
+| Signal | Worn (still body) | On a desk | How |
 |---|---|---|---|
-| Std-dev of magnitude over 1 s window | 5–20 mg | < 1 mg | 25 mults/s |
-| Gravity-vector angle change over 5 s | constant micro-drift | pinned ±0.1° | one acos per second |
-| Hardware impulse IRQ > 50 mg | rare bursts | none | already free |
+| Mean absolute deviation of magnitude over 1 s | 5–20 mg | < 1 mg | `compute_mad()` over the last 25 samples — proxy for std-dev, no sqrt |
+| Gravity-vector diff over 5 s | constant micro-drift (≥ 17 mg per 1° rotation) | pinned ±0.1° | `|g_now − g_5s_ago|` from a 5-entry ring of 1-second-averaged xyz |
+| Hardware motion IRQ > `motion_thresh_mg` | rare bursts | none | MPU6050 INT line, kept as a fast wake/refresh path |
 
-**Proposed rule:** state stays ON-BODY if **any** of:
-- 1 s sliding-window std-dev of magnitude > `WEAR_VAR_THRESH_MG` (default 5)
-- Gravity vector angle change vs 5 s ago > `WEAR_ANGLE_THRESH_DEG` (default 1.5°)
-- HW motion IRQ in the last `WEAR_OFFBODY_SEC` seconds
+The state machine pseudocode:
 
-If none of three for `WEAR_OFFBODY_SEC` (default 60) → OFF-BODY.
+```
+on every accel sample (25 Hz):
+    wear_feed_sample(x, y, z, mag)            # update MAD ring + grav accumulator
+on motion IRQ:
+    last_irq_ms := now
+    if state == OFF-BODY: state := ON-BODY    # immediate wake
+every 1 s tick:
+    var       := MAD over last 25 mag samples
+    grav_diff := |current 1-s avg − ring[oldest]|   if ring full
+    sign      := (var > VAR_THR) OR (grav_diff > GRAV_THR)
+                  OR (now − last_irq_ms < offbody_sec·1000)
+    if sign: offbody_count := 0
+    else:    offbody_count++; if >= offbody_sec → OFF-BODY
+```
 
-`STILL_SEC` becomes obsolete — it's the wrong gate. Production silicon
-(LIS2DW12) does this in hardware via the activity / inactivity classifier;
-the bench algorithm above is the software equivalent.
+`still_sec` from v1 is **retired**. The cfg field stays for migration but the
+state machine ignores it. Production silicon (LIS2DW12) does this in hardware
+via the activity / inactivity classifier; the bench logic is the software
+equivalent.
 
 ### Wear tunables
 
-| Knob | Default | Range | Unit | Meaning today |
-|---|---:|---|---|---|
-| `motion_thresh_mg` | 50 | 10–510 | mg | MPU6050 hardware motion-detect threshold; below = no IRQ |
-| `still_sec` | 5 | 1–30 | s | seconds with no IRQ before "going still" begins counting |
-| `offbody_sec` | 30 | 5–300 | s | seconds of "still" beyond `still_sec` before declaring OFF-BODY |
-| `wear_force` | auto | auto/on/off | — | UI override; for bench debugging — bypasses the SM entirely |
-
-**Proposed v2 additions** (TBD when we implement):
-
 | Knob | Default | Range | Unit | Meaning |
 |---|---:|---|---|---|
-| `wear_var_thresh_mg` | 5 | 1–50 | mg | per-second std-dev of magnitude — above this = body micro-motion present |
-| `wear_angle_thresh_deg` | 1.5 | 0.1–10 | deg | gravity-vector angle change over 5 s — above this = orientation drifting (worn) |
+| `motion_thresh_mg` | 50 | 10–510 | mg | MPU6050 hardware motion-detect threshold |
+| `offbody_sec` | 30 | 5–300 | s | seconds with no signal of life before declaring OFF-BODY |
+| `wear_var_thresh_mg` | 5 | 1–50 | mg | MAD threshold for "body micro-motion present" |
+| `wear_grav_diff_thresh_mg` | 20 | 5–200 | mg | gravity-vector 5-sec diff threshold (≈ 17 mg per 1° rotation) |
+| `still_sec` | 5 | 1–30 | s | **retired by v2**; kept in cfg for migration |
+| `wear_force` | auto | auto/on/off | — | UI override; bypasses the state machine |
+
+Live diagnostics are exposed via `GET /data2` — current var, current grav-diff,
+and which of the three signals last kept the device ON. The Live tab wear card
+surfaces all three so you can see what's keeping the SM alive.
 
 ---
 
@@ -141,42 +154,42 @@ The algorithm emits a single BPM number once every 10 s. The user has
 filtered count. When the value sits at 0 the only thing you know is "raw was
 outside [8, 30]" — could be 50 (noisy) or 4 (missed) or 30 (hovering).
 
-### What we want instead — per-breath events
+### v2 (shipped) — online peak detector + per-breath events + waveform
 
-**Proposed v2:**
+The v1 windowed BPM is **kept as-is** and still drives the Live tab BPM card.
+Running in parallel:
 
-1. **Online peak detection** instead of windowed reset:
-   - Running mean via IIR: `mean += α · (z − mean)`, α ≈ 0.05 (≈ 4 s effective window).
-   - Rising-edge detection: previous sample below `mean`, current at-or-above `mean`, AND `t_now − t_last_peak ≥ RESP_MIN_INTERVAL_MS`.
-2. **Event ring** of `{t_ms, amplitude_mg, interval_ms}` — last N peaks.
-3. **New endpoint** `GET /resp/events?since=<t_ms>` returns events since the
-   given timestamp. UI polls at 2 Hz, draws a vertical tick at every detected
-   peak time on top of the breath waveform.
-4. **New endpoint** `GET /resp/wave?n=300` returns last N samples of
-   `{z, mean}` paired so the UI can plot the raw signal vs the running mean
-   it's tracking.
-5. Keep the windowed BPM as today but **also** expose instantaneous BPM =
-   `60000 / interval_ms` for the latest peak.
+1. **Running mean** via IIR (Q15 fixed point): `mean += α · (z − mean)`,
+   α default 1638 ≈ 0.05 → ~4 s effective window. Tracks slow drift in the
+   chest-axis baseline without being faked by individual breaths.
+2. **Online peak detection** every sample: rising-cross of `mean` AND
+   `now − last_peak_ms ≥ resp_min_interval_ms` triggers an event push.
+3. **Event ring** — 64 entries of `{t_ms, amplitude_mg, interval_ms}`,
+   surfaced via `GET /resp/events?since=<t_ms>`.
+4. **Wave ring** — 300 paired `(z, mean)` samples (~12 s @ 25 Hz),
+   surfaced via `GET /resp/wave?n=<N>`.
+5. **Instantaneous BPM** = `60000 / last_interval_ms` exposed in `/data2`.
 
-Now the user can compare: "I just took a breath at the marker → did a tick
-appear?" Direct visual validation, no waiting 10 s.
+The Tune tab now shows a live **breath waveform** canvas: blue line = z,
+grey line = running mean, red ticks = detected peaks. Direct visual
+validation — "I just took a breath at the marker, did a tick appear?"
+
+When the windowed BPM filter zeroes the value (raw outside [bpm_min,
+bpm_max]), the Live BPM card now shows the raw value as a sub-line so
+the failure is no longer silent.
 
 ### Respiration tunables
 
-| Knob | Default | Range | Unit | Meaning today |
-|---|---:|---|---|---|
-| `bpm_min` | 8 | 1–30 | BPM | below this, raw BPM is silently zeroed |
-| `bpm_max` | 30 | 5–60 | BPM | above this, raw BPM is silently zeroed |
-| `resp_window_sec` | 10 | 5–15 | s | length of the analysis ring |
-| `RESP_SAMPLE_HZ` | 25 | compile-time | Hz | must match ODR |
-
-**Proposed v2 additions:**
-
 | Knob | Default | Range | Unit | Meaning |
 |---|---:|---|---|---|
-| `resp_min_interval_ms` | 2000 | 1000–7500 | ms | reject peaks closer than this (= 60000 / max BPM) |
-| `resp_iir_alpha_q15` | 1638 | 100–8192 | Q15 | mean-tracker speed; 1638 ≈ α=0.05 = 4 s eff window |
-| `resp_event_ring_size` | 64 | compile-time | — | how many recent peaks to keep |
+| `bpm_min` | 8 | 1–30 | BPM | windowed BPM filter low edge |
+| `bpm_max` | 30 | 5–60 | BPM | windowed BPM filter high edge |
+| `resp_window_sec` | 10 | 5–15 | s | length of the windowed-BPM ring |
+| `resp_min_interval_ms` | 2000 | 1000–7500 | ms | online detector: reject peaks closer than this |
+| `resp_iir_alpha_q15` | 1638 | 100–8192 | Q15 | online detector: mean-tracker speed |
+| `RESP_SAMPLE_HZ` | 25 | compile-time | Hz | must match ODR |
+| `RESP_EVENT_RING_SIZE` | 64 | compile-time | — | how many recent peaks to keep |
+| `RESP_WAVE_RING_SIZE` | 300 | compile-time | — | wave-ring length (~12 s @ 25 Hz) |
 
 ---
 
@@ -233,39 +246,55 @@ with cadence between `MIN_MS` and `MAX_MS` (default 300–1500 ms ≈ 0.66–3.3
 - **EMA baseline τ ≈ 640 ms.** Faster than gravity drift but slower than a
   fast walking transient — fine for steady walks, can lag at start/stop.
 
-### Proposed v2
+### v2 (shipped) — adaptive + bandpass + events + ground-truth
 
-1. **Adaptive threshold:** track `amp_2s = max(m) − min(m)` over the last 2 s
-   sliding window; set effective threshold to `max(80, 0.5 × amp_2s)`.
-   Auto-calibrates per user without UI fiddling.
-2. **Band-pass IIR (0.5–3 Hz):** second-order biquad on magnitude before the
-   peak detector. Kills the typing / clapping / driving false positives.
-3. **Per-step event stream** — `GET /steps/events?since=<t_ms>`. UI marks a
-   tick at each detected step on the magnitude plot. Same diagnostic value
-   as the respiration event stream.
-4. **Ground-truth tap:** a button in the Tune tab the user taps on each real
-   step. Firmware compares the timestamp of the tap to detected steps in a
-   ±300 ms window → reports precision and recall over the last 20 s walk.
-5. **Optional 50 Hz ODR mode:** flag in `app_config.h` → adjusts
-   `RESP_SAMPLE_HZ`, the loop pacing, and the EMA τ to match. Expensive on
-   nRF battery so leave off by default.
+All four toggles default **off** so behavior on a fresh build is byte-identical
+to v1. Flip them on the Tune tab as you tune.
+
+1. **Adaptive threshold** (`step_adaptive`): track `amp = max(delta) − min(delta)`
+   over a sliding `step_amp_window_ms` window. Effective threshold becomes
+   `max(STEP_ADAPTIVE_MIN_MG = 80, 50 % × amp)`. Auto-calibrates per user.
+2. **Band-pass IIR** (`step_bandpass`): cascaded single-pole HPF (0.5 Hz) +
+   LPF (3 Hz), Q15 fixed point. When enabled, replaces the slow-EMA baseline
+   path entirely (`detect_signal = bandpass(axis_signal)`). Kills typing /
+   clapping / driving false positives.
+3. **Per-step event stream** — `GET /steps/events?since=<t_ms>` returns
+   events with `{t, amplitude_mg, interval_ms}` plus the current signal
+   and effective threshold. Drives the live trace plot.
+4. **Ground-truth tap**:
+   - `POST /steps/groundtruth` records the tap timestamp.
+   - `POST /steps/groundtruth/clear` empties the GT ring.
+   - `GET /steps/eval?window_sec=&tol_ms=` returns
+     `{detected, groundtruth, matched, precision_pct, recall_pct}`
+     via greedy nearest-match within tolerance.
+5. **Per-axis selection** (`step_axis`): `mag` / `x` / `y` / `z`. Wrist
+   swing on X/Y often gives a cleaner walking signature than collapsed
+   magnitude.
+
+The Tune tab now shows a live **step trace** canvas (60 s rolling window):
+blue = signal, red dashed = effective threshold, green ticks = detected
+steps, yellow ticks = ground-truth taps. Direct visual comparison of what
+the algorithm sees vs what your foot does.
+
+50 Hz ODR mode is **not** in this drop — same caveat as before, leaving
+it as a deliberate next move.
 
 ### Steps tunables
 
-| Knob | Default | Range | Unit | Meaning today |
-|---|---:|---|---|---|
-| `step_thresh_mg` | 200 | 50–1000 | mg | peak amplitude above gravity baseline that counts as a step |
-| `step_min_ms` | 300 | 50–5000 | ms | minimum interval between steps (rejects bounce / double counts) |
-| `step_max_ms` | 1500 | 100–10000 | ms | maximum interval between steps (resets cadence after a long pause) |
-
-**Proposed v2 additions:**
-
 | Knob | Default | Range | Unit | Meaning |
 |---|---:|---|---|---|
-| `step_adaptive` | off | bool | — | when on, threshold = max(80, 0.5·amp_2s) instead of fixed |
-| `step_bandpass_en` | off | bool | — | enable 0.5–3 Hz IIR before peak detect |
-| `step_axis` | mag | mag/x/y/z | — | what signal to peak-detect on |
+| `step_thresh_mg` | 200 | 50–1000 | mg | base threshold (used when `step_adaptive=off`) |
+| `step_min_ms` | 300 | 50–5000 | ms | minimum interval between steps |
+| `step_max_ms` | 1500 | 100–10000 | ms | maximum interval between steps |
+| `step_adaptive` | off | bool | — | when on, threshold = max(80, 50 %·amp) |
+| `step_bandpass` | off | bool | — | 0.5–3 Hz IIR cascade replaces EMA baseline |
+| `step_axis` | mag | mag/x/y/z | — | which signal to peak-detect on |
 | `step_amp_window_ms` | 2000 | 500–5000 | ms | window for adaptive amplitude tracker |
+| `STEP_ADAPTIVE_MIN_MG` | 80 | compile-time | mg | floor for adaptive threshold |
+| `STEP_HPF_ALPHA_Q15` | 28890 | compile-time | Q15 | bandpass HPF α (≈ 0.88, fc ≈ 0.5 Hz) |
+| `STEP_LPF_ALPHA_Q15` | 15422 | compile-time | Q15 | bandpass LPF α (≈ 0.47, fc ≈ 3 Hz) |
+| `STEP_EVENT_RING_SIZE` | 64 | compile-time | — | event ring depth |
+| `STEP_GT_RING_SIZE` | 128 | compile-time | — | ground-truth tap ring depth |
 
 ---
 
@@ -357,8 +386,10 @@ constants are listed for reference but cannot be changed without re-flashing.
 | Param | Default | Range | Unit | Persists | NVS namespace |
 |---|---:|---|---|---|---|
 | `motion_thresh_mg` | 50 | 10–510 | mg | yes | `cfg` |
-| `still_sec` | 5 | 1–30 | s | yes | `cfg` |
 | `offbody_sec` | 30 | 5–300 | s | yes | `cfg` |
+| `wear_var_thresh_mg` | 5 | 1–50 | mg | yes | `cfg` |
+| `wear_grav_diff_thresh_mg` | 20 | 5–200 | mg | yes | `cfg` |
+| `still_sec` | 5 | 1–30 | s (retired) | yes | `cfg` |
 | `cal_x_mg`, `cal_y_mg`, `cal_z_mg` | 0 | ±2000 | mg | yes | `cfg` |
 | `wear_force` | auto | auto/on/off | — | no (volatile) | RAM |
 
@@ -369,6 +400,10 @@ constants are listed for reference but cannot be changed without re-flashing.
 | `step_thresh_mg` | 200 | 50–1000 | mg | yes | `cfg` |
 | `step_min_ms` | 300 | 50–5000 | ms | yes | `cfg` |
 | `step_max_ms` | 1500 | 100–10000 | ms | yes | `cfg` |
+| `step_adaptive` | false | bool | — | yes | `cfg` |
+| `step_bandpass` | false | bool | — | yes | `cfg` |
+| `step_axis` | mag | mag/x/y/z | — | yes | `cfg` |
+| `step_amp_window_ms` | 2000 | 500–5000 | ms | yes | `cfg` |
 
 ### Respiration
 
@@ -377,6 +412,8 @@ constants are listed for reference but cannot be changed without re-flashing.
 | `bpm_min` | 8 | 1–30 | BPM | yes | `cfg` |
 | `bpm_max` | 30 | 5–60 | BPM | yes | `cfg` |
 | `resp_window_sec` | 10 | 5–15 | s | yes | `cfg` |
+| `resp_min_interval_ms` | 2000 | 1000–7500 | ms | yes | `cfg` |
+| `resp_iir_alpha_q15` | 1638 | 100–8192 | Q15 | yes | `cfg` |
 
 ### Voice
 
