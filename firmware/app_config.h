@@ -71,6 +71,14 @@
 #define STEP_GT_RING_SIZE       128
 #define STEP_AMP_BUF_MAX        128   /* covers up to 5120 ms @ 25 Hz           */
 
+/* ── Slouch detection (gravity pitch vs baseline) ─────────────────────────── */
+#define SLOUCH_BASELINE_DEG_X10_DEFAULT  0    /* deg×10; assumes Z-up neutral  */
+#define SLOUCH_THRESH_DEG_DEFAULT        15   /* deg deviation gate            */
+#define SLOUCH_SUSTAIN_SEC_DEFAULT       5    /* seconds above thr → SLOUCHING */
+#define SLOUCH_RECOVER_SEC               2    /* seconds below thr → UPRIGHT   */
+#define SLOUCH_GRAV_ALPHA_Q15            164  /* α≈0.005 → ~8 s @ 25 Hz        */
+#define SLOUCH_EVENT_RING_SIZE           32   /* recent slouch sessions        */
+
 /* ── Cough detection (5–15 Hz envelope cluster) ───────────────────────────── */
 #define COUGH_THRESH_MG_DEFAULT     80    /* envelope rising threshold, mg     */
 #define COUGH_CLUSTER_MS_DEFAULT    800   /* peaks within window form cluster  */

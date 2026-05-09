@@ -18,10 +18,11 @@ is consumed by **cough** (and **fall** in commit 4).
 3. [Respiration BPM](#respiration-bpm)
 4. [Step counting](#step-counting)
 5. [Cough detection](#cough-detection)
-6. [Voice DSP](#voice-dsp)
-7. [Tunables — full table by subsystem](#tunables--full-table-by-subsystem)
-8. [Persistence map (NVS)](#persistence-map-nvs)
-9. [Glossary](#glossary)
+6. [Slouch detection](#slouch-detection)
+7. [Voice DSP](#voice-dsp)
+8. [Tunables — full table by subsystem](#tunables--full-table-by-subsystem)
+9. [Persistence map (NVS)](#persistence-map-nvs)
+10. [Glossary](#glossary)
 
 ---
 
@@ -477,6 +478,78 @@ Compile-time:
 
 ---
 
+## Slouch detection
+
+Source: `firmware/slouch.cpp`. Pipeline runs at the **25 Hz** decimated path
+(slouch is slow — 100 Hz is wasted on it).
+
+### Pipeline
+
+```
+xyz → very-slow IIR per axis (α≈0.005, ~8 s effective) → gravity vector
+gravity → atan2(gx, √(gy²+gz²)) × 180/π → pitch (deg×10)
+deviation = pitch − baseline
+state machine, ticked once/second:
+  if |dev| > thresh_deg:
+    above_sec++; below_sec=0
+    if above_sec ≥ sustain_sec and state != SLOUCHING:
+      state ← SLOUCHING; record session_start; bump session_count
+  else:
+    below_sec++; above_sec=0
+    if state == SLOUCHING and below_sec ≥ SLOUCH_RECOVER_SEC (=2):
+      state ← UPRIGHT; emit session event
+```
+
+### Calibration
+
+Baseline pitch is captured by `POST /slouch/calibrate` (UI button "Sit Up
+Straight + Calibrate Now" with a 3 s countdown). The captured pitch is
+written to NVS as `sl_base` (deg×10) and to runtime via
+`slouch_set_baseline_deg_x10()`. Until calibration the state is
+`SLOUCH_UNKNOWN`.
+
+### Why one axis
+
+We use pitch (forward/back tilt) rather than full 3D orientation because:
+
+1. The wrist-worn target rotates freely about the lateral axis; only
+   forward/back tilt of the spine signals slouch.
+2. atan2 of two scalars is one float, not a quaternion math stack.
+3. Roll variation (wrist twist) and yaw (turning) are noise from the
+   posture-detection point of view.
+
+### Known limitations
+
+- **Lying down** registers as a different baseline pitch and would fire
+  SLOUCHING. Production firmware should gate slouch on
+  `wear_get_state() == ON_BODY` plus an "is the user roughly vertical"
+  check (we do the first; the second is left to a follow-up).
+- **Wrist orientation** matters: if the user re-mounts the device with
+  the AD0/Vin pins flipped, baseline is invalidated and re-calibration
+  is required. Production hardware fixes orientation.
+- **Slow drift** over hours: the IIR is α≈0.005 (very slow), so gradual
+  posture changes (5 minutes of slowly slumping) get tracked into the
+  baseline rather than registering as slouch. Trade-off: this also makes
+  the algorithm robust to wrist re-orientation. Tune
+  `SLOUCH_GRAV_ALPHA_Q15` if you need different behaviour.
+
+### Slouch tunables
+
+| Param | Default | Range | Unit | Persists | NVS key |
+|---|---:|---|---|---|---|
+| `slouch_baseline_deg_x10` | 0 | ±900 | deg×10 | yes (via calibrate) | `sl_base` |
+| `slouch_thresh_deg` | 15 | 1–60 | deg | yes | `sl_thr` |
+| `slouch_sustain_sec` | 5 | 1–60 | s | yes | `sl_sus` |
+
+Compile-time:
+
+| Constant | Value | Notes |
+|---|---:|---|
+| `SLOUCH_RECOVER_SEC` | 2 | seconds below thr to end session |
+| `SLOUCH_GRAV_ALPHA_Q15` | 164 | gravity tracker α≈0.005 (~8 s) |
+
+---
+
 ## Voice DSP
 
 Source: `firmware/voice.cpp`. Runs after each I²S DMA buffer (≈10 ms) before
@@ -609,6 +682,14 @@ constants are listed for reference but cannot be changed without re-flashing.
 | `cough_thresh_mg` | 80 | 10–1000 | mg | yes | `cfg` |
 | `cough_cluster_ms` | 800 | 200–3000 | ms | yes | `cfg` |
 | `cough_min_peaks` | 3 | 1–8 | count | yes | `cfg` |
+
+### Slouch
+
+| Param | Default | Range | Unit | Persists | NVS namespace |
+|---|---:|---|---|---|---|
+| `slouch_baseline_deg_x10` | 0 | ±900 | deg×10 | yes (via calibrate) | `cfg` |
+| `slouch_thresh_deg` | 15 | 1–60 | deg | yes | `cfg` |
+| `slouch_sustain_sec` | 5 | 1–60 | s | yes | `cfg` |
 
 ### Mode
 

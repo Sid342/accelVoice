@@ -6,6 +6,7 @@
 #include "respiration.h"
 #include "mode.h"
 #include "cough.h"
+#include "slouch.h"
 #include <Preferences.h>
 #include <Arduino.h>
 #include <string.h>
@@ -51,6 +52,9 @@ static void load_defaults(void)
     s_cfg.cough_thresh_mg  = COUGH_THRESH_MG_DEFAULT;
     s_cfg.cough_cluster_ms = COUGH_CLUSTER_MS_DEFAULT;
     s_cfg.cough_min_peaks  = COUGH_MIN_PEAKS_DEFAULT;
+    s_cfg.slouch_baseline_deg_x10 = SLOUCH_BASELINE_DEG_X10_DEFAULT;
+    s_cfg.slouch_thresh_deg       = SLOUCH_THRESH_DEG_DEFAULT;
+    s_cfg.slouch_sustain_sec      = SLOUCH_SUSTAIN_SEC_DEFAULT;
 }
 
 void cfg_load(void)
@@ -92,6 +96,9 @@ void cfg_load(void)
     if (s_prefs.isKey("c_thr"))        s_cfg.cough_thresh_mg  = s_prefs.getUShort("c_thr",  s_cfg.cough_thresh_mg);
     if (s_prefs.isKey("c_cwin"))       s_cfg.cough_cluster_ms = s_prefs.getUShort("c_cwin", s_cfg.cough_cluster_ms);
     if (s_prefs.isKey("c_mp"))         s_cfg.cough_min_peaks  = s_prefs.getUChar("c_mp",    s_cfg.cough_min_peaks);
+    if (s_prefs.isKey("sl_base"))      s_cfg.slouch_baseline_deg_x10 = s_prefs.getShort("sl_base", s_cfg.slouch_baseline_deg_x10);
+    if (s_prefs.isKey("sl_thr"))       s_cfg.slouch_thresh_deg       = s_prefs.getUChar("sl_thr",  s_cfg.slouch_thresh_deg);
+    if (s_prefs.isKey("sl_sus"))       s_cfg.slouch_sustain_sec      = s_prefs.getUChar("sl_sus",  s_cfg.slouch_sustain_sec);
     s_prefs.end();
 }
 
@@ -133,6 +140,9 @@ void cfg_save(void)
     s_prefs.putUShort("c_thr",        s_cfg.cough_thresh_mg);
     s_prefs.putUShort("c_cwin",       s_cfg.cough_cluster_ms);
     s_prefs.putUChar("c_mp",          s_cfg.cough_min_peaks);
+    s_prefs.putShort("sl_base",       s_cfg.slouch_baseline_deg_x10);
+    s_prefs.putUChar("sl_thr",        s_cfg.slouch_thresh_deg);
+    s_prefs.putUChar("sl_sus",        s_cfg.slouch_sustain_sec);
     s_prefs.end();
 }
 
@@ -167,4 +177,7 @@ void cfg_apply(void)
     cough_set_thresh_mg(s_cfg.cough_thresh_mg);
     cough_set_cluster_window_ms(s_cfg.cough_cluster_ms);
     cough_set_min_peaks(s_cfg.cough_min_peaks);
+    slouch_set_thresh_deg(s_cfg.slouch_thresh_deg);
+    slouch_set_sustain_sec(s_cfg.slouch_sustain_sec);
+    slouch_set_baseline_deg_x10(s_cfg.slouch_baseline_deg_x10);
 }

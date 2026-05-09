@@ -51,6 +51,10 @@ typedef struct {
     uint16_t cough_thresh_mg;
     uint16_t cough_cluster_ms;
     uint8_t  cough_min_peaks;
+    /* Slouch detection */
+    int16_t  slouch_baseline_deg_x10;
+    uint8_t  slouch_thresh_deg;
+    uint8_t  slouch_sustain_sec;
 } cfg_t;
 
 void   cfg_load(void);

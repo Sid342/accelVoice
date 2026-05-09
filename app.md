@@ -13,6 +13,7 @@ TLS — because this device only ever lives on the bench network.
 | **Breath** | resp waveform + recent breaths + tunables |
 | **Step** | step trace + ground-truth eval + recent steps |
 | **Cough** | envelope plot, threshold/cluster/min-peaks sliders, GT taps + precision/recall |
+| **Slouch** | live pitch + deviation, "Sit Up Straight" calibration, session table |
 | **Tune** | sliders for every wear / step / resp threshold; calibrate accel; reset steps & resp; force wear |
 | **System** | hostname, AP/STA IP, RSSI, uptime, build/heap/chip, reboot, settings export |
 | **Network** | AP info, STA join form (SSID/pass), mDNS hostname, OTA status |
@@ -91,6 +92,16 @@ init eagerly.
 | POST | `/cough/clear_gt` | `{}` | empty GT ring, returns `{count:0}` |
 | GET | `/cough/eval` | `?window_ms=<N>` | `{tp, fp, fn, precision_pct, recall_pct}` |
 | POST | `/cough/cfg` | `{thresh_mg, cluster_window_ms, min_peaks}` | applies + persists, returns `/cough` shape |
+
+### Phase 2.5 — Slouch
+
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/slouch` | — | `{state, calibrated, pitch_deg_x10, baseline_deg_x10, dev_deg_x10, thresh_deg, sustain_sec, sessions, total_time_sec, longest_sec, since_upright_sec}` |
+| POST | `/slouch/calibrate` | `{}` | captures current pitch as baseline, persists, returns `/slouch` |
+| POST | `/slouch/reset` | `{}` | clears stats + event ring |
+| GET | `/slouch/events` | `?since=<ms>` | `{now, total, events:[{t,dur,max_dev_x10}…]}` |
+| POST | `/slouch/cfg` | `{thresh_deg, sustain_sec}` | applies + persists, returns `/slouch` |
 
 ### Cloud STT (Deepgram)
 

@@ -118,6 +118,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <button data-tab="breath">Breath</button>
     <button data-tab="step">Step</button>
     <button data-tab="cough">Cough</button>
+    <button data-tab="slouch">Slouch</button>
     <button data-tab="tune">Tune</button>
     <button data-tab="system">System</button>
     <button data-tab="network">Network</button>
@@ -391,6 +392,59 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
         <th>#</th><th>Age</th><th>Peaks</th><th>Duration</th><th>Peak amp</th>
       </tr></thead>
       <tbody id="cgTblBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ─────────────── SLOUCH ─────────────── -->
+<div class="tab" id="tab-slouch">
+  <div class="section">
+    <h2>Posture <span class="hint">— gravity-vector pitch vs calibrated baseline</span></h2>
+    <div class="cards">
+      <div class="card"><div class="lbl">Current pitch</div><div id="slPitch" class="val">—</div><div class="sub" id="slPitchSub">—</div></div>
+      <div class="card"><div class="lbl">Deviation</div><div id="slDev" class="val">—</div><div class="sub" id="slDevSub">vs baseline</div></div>
+      <div class="card"><div class="lbl">State</div><div id="slState" class="val off">UNKNOWN</div><div class="sub" id="slStateSub">calibrate first</div></div>
+      <div class="card"><div class="lbl">Since stand</div><div id="slSince" class="val">—</div><div class="sub">time</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Calibration</h2>
+    <div class="actions">
+      <button class="btn primary" id="slCalBtn" onclick="slCalStart()">Sit Up Straight + Calibrate Now</button>
+      <button class="btn warn" onclick="slReset()">Reset stats</button>
+    </div>
+    <div class="note" id="slCalNote" style="margin-top:8px">Sit upright, then press the button. We'll capture pitch in 3 s.</div>
+  </div>
+
+  <div class="section">
+    <h2>Stats</h2>
+    <div class="cards">
+      <div class="card"><div class="lbl">Sessions</div><div id="slSess" class="val">0</div><div class="sub">today</div></div>
+      <div class="card"><div class="lbl">Total time</div><div id="slTotal" class="val">0</div><div class="sub">slouching</div></div>
+      <div class="card"><div class="lbl">Longest</div><div id="slLong" class="val">0</div><div class="sub">single session</div></div>
+      <div class="card"><div class="lbl">Baseline</div><div id="slBase" class="val">—</div><div class="sub">upright pitch</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Tunables</h2>
+    <div class="row"><label>Threshold</label>
+      <input type="range" id="slThr" min="5" max="30" step="1" value="15">
+      <span id="slThrV" class="num">15 °</span></div>
+    <div class="row"><label>Sustain</label>
+      <input type="range" id="slSus" min="3" max="30" step="1" value="5">
+      <span id="slSusV" class="num">5 s</span></div>
+    <div class="note">Above threshold for ≥ sustain seconds → SLOUCHING. Returns inside threshold for 2 s → UPRIGHT (session ends).</div>
+  </div>
+
+  <div class="section">
+    <h2>Recent sessions</h2>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;color:var(--dim)">
+        <th>#</th><th>Start age</th><th>Duration</th><th>Max deviation</th>
+      </tr></thead>
+      <tbody id="slTblBody"></tbody>
     </table>
   </div>
 </div>
@@ -690,7 +744,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 <script>
 /* ── Tab switching ───────────────────────────────────────────────────────── */
-const TABS=['live','device','breath','step','cough','tune','system','network','find','voice'];
+const TABS=['live','device','breath','step','cough','slouch','tune','system','network','find','voice'];
 function showTab(name){
   TABS.forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===name);
@@ -702,6 +756,7 @@ function showTab(name){
   if(name==='breath'){drawRespWave();}
   if(name==='step'){drawStepTrace();}
   if(name==='cough'){tickCough();}
+  if(name==='slouch'){tickSlouch();}
 }
 document.querySelectorAll('#tabnav button').forEach(b=>{
   b.addEventListener('click',()=>showTab(b.dataset.tab));
@@ -1491,6 +1546,99 @@ function cgEval(){
     if(id==='cgCwin') body.cluster_window_ms=+el.value;
     if(id==='cgMp')   body.min_peaks=+el.value;
     el._t=setTimeout(()=>pj('/cough/cfg',JSON.stringify(body)),200);
+  });
+});
+
+/* ── Slouch tab ──────────────────────────────────────────────────────────── */
+let slCalCountdown=0;
+function fmtDur(sec){
+  if(!sec)return '0 s';
+  if(sec<60)return sec+' s';
+  const m=Math.floor(sec/60), s=sec%60;
+  if(m<60)return m+' m '+(s?s+' s':'').trim();
+  const h=Math.floor(m/60), mm=m%60;
+  return h+' h '+(mm?mm+' m':'').trim();
+}
+async function tickSlouch(){
+  if(!document.getElementById('tab-slouch').classList.contains('active'))return;
+  try{
+    const [s,e]=await Promise.all([
+      fetch('/slouch',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/slouch/events?since=0',{cache:'no-store'}).then(r=>r.json()),
+    ]);
+    const pitch=(s.pitch_deg_x10/10).toFixed(1);
+    const dev=(s.dev_deg_x10/10).toFixed(1);
+    const baseline=(s.baseline_deg_x10/10).toFixed(1);
+    const arrow=s.dev_deg_x10>0?'↑':(s.dev_deg_x10<0?'↓':'·');
+    setText('slPitch', pitch+'° '+arrow);
+    setText('slPitchSub', s.calibrated?'baseline '+baseline+'°':'(uncalibrated)');
+    setText('slDev', dev+'°');
+    const absdev=Math.abs(s.dev_deg_x10/10);
+    const dEl=document.getElementById('slDev');
+    dEl.className='val '+(absdev>s.thresh_deg?'off':(absdev>s.thresh_deg*0.5?'warn':'on'));
+    setText('slDevSub','threshold '+s.thresh_deg+'°');
+    const stEl=document.getElementById('slState');
+    stEl.textContent=s.state.toUpperCase();
+    stEl.className='val '+(s.state==='upright'?'on':(s.state==='slouching'?'off':''));
+    setText('slStateSub', s.calibrated?'sustain '+s.sustain_sec+' s':'tap "Sit Up + Calibrate"');
+    setText('slSince', s.state==='upright'?fmtDur(0):(s.since_upright_sec?fmtDur(s.since_upright_sec):'—'));
+    setText('slSess', s.sessions);
+    setText('slTotal', fmtDur(s.total_time_sec));
+    setText('slLong', fmtDur(s.longest_sec));
+    setText('slBase', s.calibrated?baseline+'°':'—');
+    if(Date.now()>suppressUntil){
+      setSlider('slThr', s.thresh_deg, '°');
+      setSlider('slSus', s.sustain_sec, 's');
+    }
+    if(e.events){
+      const tb=document.getElementById('slTblBody');
+      const evs=e.events.slice(-12);
+      const rows=evs.slice().reverse().map((ev,i)=>{
+        const age=fmtAgeShort(e.now-ev.t);
+        return '<tr style="border-top:1px solid #334155">'
+          +'<td style="padding:4px 0">'+(evs.length-i)+'</td>'
+          +'<td>'+age+'</td>'
+          +'<td>'+fmtDur(ev.dur)+'</td>'
+          +'<td>'+(ev.max_dev_x10/10).toFixed(1)+'°</td>'
+          +'</tr>';
+      }).join('');
+      tb.innerHTML=rows||'<tr><td colspan="4" style="padding:6px 0;color:#94a3b8">no slouch sessions yet</td></tr>';
+    }
+  }catch(err){}
+}
+setInterval(tickSlouch,1000);
+function slCalStart(){
+  slCalCountdown=3;
+  const btn=document.getElementById('slCalBtn');
+  const note=document.getElementById('slCalNote');
+  btn.disabled=true;
+  const tick=()=>{
+    note.textContent='Hold posture… '+slCalCountdown;
+    if(slCalCountdown===0){
+      pj('/slouch/calibrate','{}').then(()=>{
+        note.textContent='Captured. Baseline updated.';
+        btn.disabled=false;
+        tickSlouch();
+      });
+      return;
+    }
+    slCalCountdown--;
+    setTimeout(tick,1000);
+  };
+  tick();
+}
+function slReset(){pj('/slouch/reset','{}').then(tickSlouch);}
+['slThr','slSus'].forEach(id=>{
+  const el=document.getElementById(id);
+  el.addEventListener('input',()=>{
+    suppress();
+    const unit=id==='slThr'?'°':'s';
+    document.getElementById(id+'V').textContent=el.value+' '+unit;
+    clearTimeout(el._t);
+    const body={};
+    if(id==='slThr')body.thresh_deg=+el.value;
+    if(id==='slSus')body.sustain_sec=+el.value;
+    el._t=setTimeout(()=>pj('/slouch/cfg',JSON.stringify(body)),200);
   });
 });
 

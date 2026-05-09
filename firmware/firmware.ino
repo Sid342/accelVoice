@@ -41,6 +41,7 @@
 #include "voice.h"
 #include "stt.h"
 #include "cough.h"
+#include "slouch.h"
 #include "web_index.h"
 #include <SPIFFS.h>
 
@@ -931,6 +932,84 @@ static void handle_cough_cfg(void)
     handle_cough_status();
 }
 
+/* ── /slouch/* ─────────────────────────────────────────────────────────── */
+static const char *slouch_state_name(slouch_state_t s)
+{
+    switch (s) {
+        case SLOUCH_UPRIGHT:   return "upright";
+        case SLOUCH_SLOUCHING: return "slouching";
+        default:               return "unknown";
+    }
+}
+static void handle_slouch_status(void)
+{
+    char buf[260];
+    snprintf(buf, sizeof(buf),
+             "{\"state\":\"%s\",\"calibrated\":%s,"
+              "\"pitch_deg_x10\":%d,\"baseline_deg_x10\":%d,\"dev_deg_x10\":%d,"
+              "\"thresh_deg\":%u,\"sustain_sec\":%u,"
+              "\"sessions\":%lu,\"total_time_sec\":%lu,"
+              "\"longest_sec\":%lu,\"since_upright_sec\":%lu}",
+             slouch_state_name(slouch_get_state()),
+             slouch_is_calibrated() ? "true" : "false",
+             slouch_current_pitch_deg_x10(),
+             slouch_baseline_deg_x10(),
+             slouch_current_deviation_deg_x10(),
+             slouch_get_thresh_deg(), slouch_get_sustain_sec(),
+             (unsigned long)slouch_session_count(),
+             (unsigned long)slouch_total_time_sec(),
+             (unsigned long)slouch_longest_session_sec(),
+             (unsigned long)slouch_time_since_last_upright_sec());
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", buf);
+}
+static void handle_slouch_calibrate(void)
+{
+    slouch_calibrate_now();
+    cfg_get()->slouch_baseline_deg_x10 = slouch_baseline_deg_x10();
+    cfg_save();
+    handle_slouch_status();
+}
+static void handle_slouch_reset(void)
+{
+    slouch_reset_stats();
+    handle_slouch_status();
+}
+static void handle_slouch_events(void)
+{
+    String s = http.arg("since");
+    uint32_t since = (uint32_t)s.toInt();
+    slouch_event_t evts[16];
+    size_t n = slouch_get_events_since(since, evts, sizeof(evts)/sizeof(evts[0]));
+    String body;
+    body.reserve(96 + n * 56);
+    body  = "{\"now\":";   body += (uint32_t)millis();
+    body += ",\"total\":"; body += (uint32_t)slouch_session_count();
+    body += ",\"events\":[";
+    for (size_t i = 0; i < n; i++) {
+        if (i) body += ',';
+        body += "{\"t\":";       body += (uint32_t)evts[i].start_t_ms;
+        body += ",\"dur\":";     body += (uint32_t)evts[i].duration_sec;
+        body += ",\"max_dev_x10\":"; body += (int32_t)evts[i].max_dev_deg_x10;
+        body += '}';
+    }
+    body += "]}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
+}
+static void handle_slouch_cfg(void)
+{
+    String body = http.arg("plain");
+    cfg_t *c = cfg_get();
+    int v;
+    v = kv_int(body, "thresh_deg", -1);
+    if (v >= 1 && v <= 60) { c->slouch_thresh_deg = (uint8_t)v; slouch_set_thresh_deg((uint8_t)v); }
+    v = kv_int(body, "sustain_sec", -1);
+    if (v >= 1 && v <= 60) { c->slouch_sustain_sec = (uint8_t)v; slouch_set_sustain_sec((uint8_t)v); }
+    cfg_save();
+    handle_slouch_status();
+}
+
 /* ── /find (start), /find/stop ─────────────────────────────────────────── */
 static void handle_find_post(void)
 {
@@ -1041,6 +1120,11 @@ static void http_start(void)
     http.on("/cough/clear_gt",   HTTP_POST, handle_cough_clear_gt);
     http.on("/cough/eval",       HTTP_GET,  handle_cough_eval);
     http.on("/cough/cfg",        HTTP_POST, handle_cough_cfg);
+    http.on("/slouch",           HTTP_GET,  handle_slouch_status);
+    http.on("/slouch/calibrate", HTTP_POST, handle_slouch_calibrate);
+    http.on("/slouch/reset",     HTTP_POST, handle_slouch_reset);
+    http.on("/slouch/events",    HTTP_GET,  handle_slouch_events);
+    http.on("/slouch/cfg",       HTTP_POST, handle_slouch_cfg);
     http.onNotFound(handle_404);
     http.begin();
     Serial.print(F("[http] listening on :")); Serial.println(WIFI_HTTP_PORT);
@@ -1075,6 +1159,7 @@ void setup(void)
     voice_init();
     stt_init();
     cough_init();
+    slouch_init();
     /* mode is already restored from NVS via cfg_apply() above. */
     battsim_set(80, false, false);
 
@@ -1134,6 +1219,7 @@ void loop(void)
             if (wear_get_state() == WEAR_STATE_ON_BODY) {
                 resp_add_sample(last_x_mg, last_y_mg, last_z_mg);
                 steps_add_sample(last_x_mg, last_y_mg, last_z_mg);
+                slouch_feed_sample(last_x_mg, last_y_mg, last_z_mg);
             }
         }
         if (++s_decim_n >= SAMPLE_DECIM) s_decim_n = 0;
@@ -1146,6 +1232,7 @@ void loop(void)
     if (now - last_tick_ms >= 1000) {
         last_tick_ms = now;
         wear_tick_sec();
+        slouch_tick_sec();
     }
 
     uint32_t sc = steps_get_count();

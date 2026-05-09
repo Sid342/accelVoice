@@ -61,6 +61,15 @@ mean tracker, two biquads, one envelope LPF, peak + cluster gate). Ports
 verbatim to LIS2DW12. Constants port unchanged because both sensors
 report mg. Cluster window and threshold are the only field-tuneables.
 
+**Slouch detector** (`firmware/slouch.cpp`) is a slow IIR gravity tracker
+(α≈0.005, ~8 s effective at 25 Hz) plus an `atan2`-based pitch projection
+plus a per-second state machine. Float math (one atan2, one sqrt per
+second). Ports verbatim. The "Sit Up Straight" calibration step is part
+of the production onboarding flow and writes baseline to settings under
+key `sl_base`. Note: the LIS2DW12 has a hardware sleep/idle interrupt that
+can wake the slouch SM only when the user stops moving — opportunity to
+gate the per-second tick to save MCU wake events.
+
 **Mode AUTO** — production default. AUTO follows wear; NORMAL/TURBO are
 bench/lab modes that ignore the wear sensor and always run the ionizer
 (respecting OFF + battery). AUTO is what production firmware should
