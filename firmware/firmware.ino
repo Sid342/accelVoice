@@ -185,14 +185,65 @@ static void handle_data2(void)
     char buf[768];
     snprintf(buf, sizeof(buf),
         "{\"wear\":{\"var\":%d,\"var_thr\":%u,\"grav\":%d,\"grav_thr\":%u,\"signal\":\"%s\"},"
-        "\"resp\":{\"mean\":0,\"instant_bpm\":0,\"total_events\":0},"
+        "\"resp\":{\"mean\":%d,\"instant_bpm\":%u,\"total_events\":%lu,"
+                 "\"min_interval_ms\":%u,\"iir_alpha\":%u},"
         "\"steps\":{\"signal\":0,\"threshold\":0,\"total_events\":0,\"gt_count\":0,"
                   "\"adaptive\":false,\"bandpass\":false,\"axis\":\"mag\"}}",
         wear_current_var_mg(), wear_get_var_thresh_mg(),
         wear_current_grav_diff_mg(), wear_get_grav_diff_thresh_mg(),
-        wear_last_signal());
+        wear_last_signal(),
+        resp_current_mean_mg(), resp_instant_bpm(),
+        (unsigned long)resp_total_events(),
+        resp_get_min_interval_ms(), resp_get_iir_alpha_q15());
     http.sendHeader("Cache-Control", "no-store");
     http.send(200, "application/json", buf);
+}
+
+/* ── /resp/events?since=<ms> — JSON array of breath events ─────────────── */
+static void handle_resp_events(void)
+{
+    String s = http.arg("since");
+    uint32_t since = (uint32_t)s.toInt();
+    resp_event_t evts[32];
+    size_t n = resp_get_events_since(since, evts, sizeof(evts)/sizeof(evts[0]));
+
+    String body;
+    body.reserve(64 + n * 48);
+    body  = "{\"now\":";    body += (uint32_t)millis();
+    body += ",\"total\":";  body += (uint32_t)resp_total_events();
+    body += ",\"events\":[";
+    for (size_t i = 0; i < n; i++) {
+        if (i) body += ',';
+        body += "{\"t\":";   body += (uint32_t)evts[i].t_ms;
+        body += ",\"amp\":"; body += (int32_t)evts[i].amplitude_mg;
+        body += ",\"int\":"; body += (uint32_t)evts[i].interval_ms;
+        body += '}';
+    }
+    body += "]}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
+}
+
+/* ── /resp/wave?n=<N> — last N samples of (z, mean) ────────────────────── */
+static void handle_resp_wave(void)
+{
+    int n = http.hasArg("n") ? http.arg("n").toInt() : 200;
+    if (n <= 0)   n = 200;
+    if (n > 300)  n = 300;
+    static int16_t z_buf[300];
+    static int16_t m_buf[300];
+    size_t got = resp_get_wave(z_buf, m_buf, (size_t)n);
+
+    String body;
+    body.reserve(32 + got * 12);
+    body  = "{\"n\":"; body += (uint32_t)got;
+    body += ",\"z\":[";
+    for (size_t i = 0; i < got; i++) { if (i) body += ','; body += (int32_t)z_buf[i]; }
+    body += "],\"m\":[";
+    for (size_t i = 0; i < got; i++) { if (i) body += ','; body += (int32_t)m_buf[i]; }
+    body += "]}";
+    http.sendHeader("Cache-Control", "no-store");
+    http.send(200, "application/json", body);
 }
 
 /* ── /config GET + POST ─────────────────────────────────────────────────── */
@@ -205,11 +256,13 @@ static void handle_config_get(void)
              "\"wear_var_thresh_mg\":%u,\"wear_grav_diff_thresh_mg\":%u,"
              "\"step_thresh_mg\":%u,\"step_min_ms\":%u,\"step_max_ms\":%u,"
              "\"bpm_min\":%u,\"bpm_max\":%u,\"resp_window_sec\":%u,"
+             "\"resp_min_interval_ms\":%u,\"resp_iir_alpha_q15\":%u,"
              "\"cal_x\":%d,\"cal_y\":%d,\"cal_z\":%d}",
              c->motion_thresh_mg, c->still_sec, c->offbody_sec,
              c->wear_var_thresh_mg, c->wear_grav_diff_thresh_mg,
              c->step_thresh_mg, c->step_min_ms, c->step_max_ms,
              c->bpm_min, c->bpm_max, c->resp_window_sec,
+             c->resp_min_interval_ms, c->resp_iir_alpha_q15,
              c->cal_x_mg, c->cal_y_mg, c->cal_z_mg);
     http.send(200, "application/json", buf);
 }
@@ -240,6 +293,10 @@ static void handle_config_post(void)
     if (v >= 5 && v <= 60) c->bpm_max = v;
     v = kv_int(body, "resp_window_sec", -1);
     if (v >= 5 && v <= 15) c->resp_window_sec = v;
+    v = kv_int(body, "resp_min_interval_ms", -1);
+    if (v >= 500 && v <= 10000) c->resp_min_interval_ms = v;
+    v = kv_int(body, "resp_iir_alpha_q15", -1);
+    if (v >= 50 && v <= 16384) c->resp_iir_alpha_q15 = v;
     cfg_apply();
     cfg_save();
     handle_config_get();
@@ -640,6 +697,8 @@ static void http_start(void)
     http.on("/",                 HTTP_GET,  handle_root);
     http.on("/data",             HTTP_GET,  handle_data);
     http.on("/data2",            HTTP_GET,  handle_data2);
+    http.on("/resp/events",      HTTP_GET,  handle_resp_events);
+    http.on("/resp/wave",        HTTP_GET,  handle_resp_wave);
     http.on("/config",           HTTP_GET,  handle_config_get);
     http.on("/config",           HTTP_POST, handle_config_post);
     http.on("/mode",             HTTP_POST, handle_mode_post);

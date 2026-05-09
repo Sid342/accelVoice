@@ -22,9 +22,11 @@ static void load_defaults(void)
     s_cfg.step_thresh_mg   = STEP_PEAK_THRESH_MG;
     s_cfg.step_min_ms      = STEP_MIN_INTERVAL_MS;
     s_cfg.step_max_ms      = STEP_MAX_INTERVAL_MS;
-    s_cfg.bpm_min          = RESP_BPM_MIN;
-    s_cfg.bpm_max          = RESP_BPM_MAX;
-    s_cfg.resp_window_sec  = RESP_WINDOW_SEC;
+    s_cfg.bpm_min                = RESP_BPM_MIN;
+    s_cfg.bpm_max                = RESP_BPM_MAX;
+    s_cfg.resp_window_sec        = RESP_WINDOW_SEC;
+    s_cfg.resp_min_interval_ms   = RESP_MIN_INTERVAL_MS;
+    s_cfg.resp_iir_alpha_q15     = RESP_IIR_ALPHA_Q15;
     s_cfg.cal_x_mg         = 0;
     s_cfg.cal_y_mg         = 0;
     s_cfg.cal_z_mg         = 0;
@@ -48,6 +50,8 @@ void cfg_load(void)
     if (s_prefs.isKey("bpm_min"))      s_cfg.bpm_min          = s_prefs.getUChar("bpm_min",       s_cfg.bpm_min);
     if (s_prefs.isKey("bpm_max"))      s_cfg.bpm_max          = s_prefs.getUChar("bpm_max",       s_cfg.bpm_max);
     if (s_prefs.isKey("resp_win"))     s_cfg.resp_window_sec  = s_prefs.getUChar("resp_win",      s_cfg.resp_window_sec);
+    if (s_prefs.isKey("rmin_ms"))      s_cfg.resp_min_interval_ms = s_prefs.getUShort("rmin_ms",  s_cfg.resp_min_interval_ms);
+    if (s_prefs.isKey("riir_a"))       s_cfg.resp_iir_alpha_q15   = s_prefs.getUShort("riir_a",   s_cfg.resp_iir_alpha_q15);
     if (s_prefs.isKey("cal_x"))        s_cfg.cal_x_mg         = s_prefs.getShort("cal_x", 0);
     if (s_prefs.isKey("cal_y"))        s_cfg.cal_y_mg         = s_prefs.getShort("cal_y", 0);
     if (s_prefs.isKey("cal_z"))        s_cfg.cal_z_mg         = s_prefs.getShort("cal_z", 0);
@@ -71,6 +75,8 @@ void cfg_save(void)
     s_prefs.putUChar("bpm_min",       s_cfg.bpm_min);
     s_prefs.putUChar("bpm_max",       s_cfg.bpm_max);
     s_prefs.putUChar("resp_win",      s_cfg.resp_window_sec);
+    s_prefs.putUShort("rmin_ms",      s_cfg.resp_min_interval_ms);
+    s_prefs.putUShort("riir_a",       s_cfg.resp_iir_alpha_q15);
     s_prefs.putShort("cal_x",         s_cfg.cal_x_mg);
     s_prefs.putShort("cal_y",         s_cfg.cal_y_mg);
     s_prefs.putShort("cal_z",         s_cfg.cal_z_mg);
@@ -93,4 +99,6 @@ void cfg_apply(void)
     steps_set_intervals_ms(s_cfg.step_min_ms, s_cfg.step_max_ms);
     resp_set_filter(s_cfg.bpm_min, s_cfg.bpm_max);
     resp_set_window_sec(s_cfg.resp_window_sec);
+    resp_set_min_interval_ms(s_cfg.resp_min_interval_ms);
+    resp_set_iir_alpha_q15(s_cfg.resp_iir_alpha_q15);
 }

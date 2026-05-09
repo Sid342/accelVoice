@@ -20,6 +20,9 @@ typedef struct {
     uint8_t  bpm_min;
     uint8_t  bpm_max;
     uint8_t  resp_window_sec;
+    /* Respiration v2 */
+    uint16_t resp_min_interval_ms;
+    uint16_t resp_iir_alpha_q15;
     /* Calibration */
     int16_t  cal_x_mg;
     int16_t  cal_y_mg;

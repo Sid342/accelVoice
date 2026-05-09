@@ -203,8 +203,25 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <div class="row"><label>Window length</label>
       <input type="range" id="respWin" min="5" max="15" step="1" value="10">
       <span id="respWinV" class="num">10 s</span></div>
-    <div class="note">Wider filter range = more readings (incl. noise). Shorter window = faster but less stable.
-      Buffer reset whenever window changes.</div>
+    <div class="row"><label>Min interval (v2)</label>
+      <input type="range" id="rMin" min="1000" max="7500" step="100" value="2000">
+      <span id="rMinV" class="num">2000 ms</span></div>
+    <div class="row"><label>Mean tracker α (v2)</label>
+      <input type="range" id="rAlpha" min="100" max="8192" step="50" value="1638">
+      <span id="rAlphaV" class="num">1638 (slow)</span></div>
+    <div class="note">v1 windowed BPM still drives the live card. v2 also runs an online peak detector
+      with an IIR mean tracker — emits a per-breath event whenever Z crosses the running mean upward,
+      with peaks at least <em>min interval</em> apart. Lower α = slower mean (more stable, slower
+      to adapt). Higher α = faster mean (catches drift, more sensitive to noise).</div>
+    <div style="margin-top:12px">
+      <div class="lbl">Breath waveform <span class="hint">— last 12 s; blue = z, grey = mean, red ticks = detected breaths</span></div>
+      <canvas id="respWave" width="900" height="140" style="background:#0e1116;border-radius:6px;margin-top:6px;width:100%"></canvas>
+    </div>
+    <div class="kv" style="margin-top:8px">
+      <dt>Instant BPM</dt><dd id="rIBpm">—</dd>
+      <dt>Total events</dt><dd id="rTot">0</dd>
+      <dt>Running mean</dt><dd id="rMean">—</dd>
+    </div>
   </div>
 
   <div class="section">
@@ -526,6 +543,7 @@ async function tick(){
     bpmCard.className='card '+(d.bpm_valid?'bpm-valid':'bpm-invalid');
     let bsub=d.bpm_valid?'valid · '+d.bpm+' BPM':(d.bpm_raw?'raw '+d.bpm_raw+' (filtered)':'collecting…');
     bsub+=' · '+d.resp_progress+'/'+d.resp_window_len;
+    if(d.bpm===0&&d.bpm_raw>0){bsub+=' · raw '+d.bpm_raw;}
     setText('bsub',bsub);
     const ionEl=document.getElementById('ion');
     ionEl.textContent=d.ionizer?'ON':'OFF';
@@ -549,6 +567,8 @@ async function tick(){
       setSlider('bpmMin',d.cfg.bpm_min,'BPM');
       setSlider('bpmMax',d.cfg.bpm_max,'BPM');
       setSlider('respWin',d.cfg.resp_window_sec,'s');
+      if('resp_min_interval_ms' in d.cfg) setSlider('rMin',d.cfg.resp_min_interval_ms,'ms');
+      if('resp_iir_alpha_q15' in d.cfg) setSlider('rAlpha',d.cfg.resp_iir_alpha_q15,d.cfg.resp_iir_alpha_q15>3000?'(fast)':'(slow)');
       setSel('modeSel',d.mode);
       setSel('wearSel',d.wear_forced);
       setSlider('batPct',d.battery.pct,'');
@@ -599,9 +619,70 @@ async function tick2(){
       const w=d.wear;
       setText('wsig','sig: '+w.signal+' · var '+w.var+'/'+w.var_thr+' · grav '+w.grav+'/'+w.grav_thr+' mg');
     }
+    if(d.resp){
+      setText('rIBpm', d.resp.instant_bpm? d.resp.instant_bpm+' BPM' : '—');
+      setText('rTot',  d.resp.total_events);
+      setText('rMean', d.resp.mean+' mg');
+    }
   }catch(e){}
 }
 setInterval(tick2,1000);tick2();
+
+/* ── Breath waveform (Tune tab) ──────────────────────────────────────────── */
+let respLastEvtT=0;let respMarks=[];
+async function drawRespWave(){
+  if(!document.getElementById('tab-tune').classList.contains('active'))return;
+  const cv=document.getElementById('respWave');if(!cv)return;
+  try{
+    const [wr,er]=await Promise.all([
+      fetch('/resp/wave?n=300',{cache:'no-store'}).then(r=>r.json()),
+      fetch('/resp/events?since='+respLastEvtT,{cache:'no-store'}).then(r=>r.json()),
+    ]);
+    /* track newest event time so we don't re-fetch the same ones */
+    if(er.events&&er.events.length){
+      const nowAbs=Date.now();
+      er.events.forEach(e=>{respMarks.push({t:e.t,added:nowAbs});});
+      respLastEvtT=er.events[er.events.length-1].t;
+    }
+    /* drop marks older than wave window (~12 s) */
+    const cutT=Date.now()-13000;
+    respMarks=respMarks.filter(m=>m.added>cutT);
+    /* draw */
+    const ctx=cv.getContext('2d');const W=cv.width,H=cv.height;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#0e1116';ctx.fillRect(0,0,W,H);
+    if(!wr.z||!wr.z.length){return;}
+    let mn=Infinity,mx=-Infinity;
+    for(let i=0;i<wr.z.length;i++){if(wr.z[i]<mn)mn=wr.z[i];if(wr.z[i]>mx)mx=wr.z[i];}
+    for(let i=0;i<wr.m.length;i++){if(wr.m[i]<mn)mn=wr.m[i];if(wr.m[i]>mx)mx=wr.m[i];}
+    if(mx-mn<10){mx=mn+10;}
+    const pad=4;const yScale=(H-2*pad)/(mx-mn);
+    const xScale=W/wr.z.length;
+    /* mean line (grey) */
+    ctx.strokeStyle='#6b7280';ctx.lineWidth=1;ctx.beginPath();
+    for(let i=0;i<wr.m.length;i++){
+      const x=i*xScale,y=H-pad-(wr.m[i]-mn)*yScale;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    /* z signal (blue) */
+    ctx.strokeStyle='#5aa9ff';ctx.lineWidth=1.5;ctx.beginPath();
+    for(let i=0;i<wr.z.length;i++){
+      const x=i*xScale,y=H-pad-(wr.z[i]-mn)*yScale;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+    /* event ticks (red) — relative position by added-time vs window */
+    ctx.strokeStyle='#e58383';ctx.lineWidth=2;
+    const winMs=12000;const nowMs=Date.now();
+    respMarks.forEach(m=>{
+      const ageMs=nowMs-m.added;if(ageMs>winMs)return;
+      const x=W*(1-ageMs/winMs);
+      ctx.beginPath();ctx.moveTo(x,2);ctx.lineTo(x,H-2);ctx.stroke();
+    });
+  }catch(e){}
+}
+setInterval(drawRespWave,500);
 
 /* ── Slider/Selector handlers ────────────────────────────────────────────── */
 function bindSlider(id,unit,key,debounce){
@@ -625,6 +706,8 @@ bindSlider('bpmMax','BPM','bpm_max');
 bindSlider('respWin','s','resp_window_sec');
 bindSlider('wVar','mg','wear_var_thresh_mg');
 bindSlider('wGrav','mg','wear_grav_diff_thresh_mg');
+bindSlider('rMin','ms','resp_min_interval_ms');
+bindSlider('rAlpha','','resp_iir_alpha_q15');
 
 document.getElementById('modeSel').addEventListener('change',e=>{suppress();pj('/mode',JSON.stringify({mode:e.target.value}));});
 document.getElementById('wearSel').addEventListener('change',e=>{suppress();pj('/wear/force',JSON.stringify({state:e.target.value}));});
