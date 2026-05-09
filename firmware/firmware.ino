@@ -203,7 +203,9 @@ static void handle_data2(void)
                  "\"hysteresis_mg\":%u,"
                  "\"pca_wx_q8\":%u,\"pca_wy_q8\":%u,\"pca_wz_q8\":%u,"
                  "\"activity_mg2_x10\":%d,"
-                 "\"autocorr_window_sec\":%u},"
+                 "\"autocorr_window_sec\":%u,"
+                 "\"bpm_autocorr\":%u,\"bpm_autocorr_confidence_pct\":%u,"
+                 "\"autocorr_age_ms\":%lu},"
         "\"steps\":{\"signal\":%d,\"threshold\":%d,\"baseline\":%d,"
                   "\"total_events\":%lu,\"gt_count\":%u,"
                   "\"adaptive\":%s,\"bandpass\":%s,\"axis\":\"%s\","
@@ -227,6 +229,9 @@ static void handle_data2(void)
         pca_w[0], pca_w[1], pca_w[2],
         resp_current_activity_mg2_x10(),
         resp_get_autocorr_window_sec(),
+        resp_autocorr_bpm(), resp_autocorr_confidence_pct(),
+        (unsigned long)(resp_autocorr_last_run_ms() == 0 ? 0
+                       : (millis() - resp_autocorr_last_run_ms())),
         steps_current_signal(), steps_current_threshold(),
         steps_current_baseline(),
         (unsigned long)steps_total_events(),
@@ -479,6 +484,8 @@ static void handle_config_post(void)
         if (body.indexOf(pat) >= 0)
             c->resp_adaptive_bp = kv_bool(body, "resp_adaptive_bp", c->resp_adaptive_bp);
     }
+    v = kv_int(body, "resp_autocorr_window_sec", -1);
+    if (v >= 10 && v <= 60) c->resp_autocorr_window_sec = (uint8_t)v;
     cfg_apply();
     cfg_save();
     handle_config_get();
@@ -999,6 +1006,10 @@ void loop(void)
             steps_add_sample(last_x_mg, last_y_mg, last_z_mg);
         }
     }
+
+    /* Respiration autocorr runs at most every RESP_AUTOCORR_PERIOD_MS;
+     * cheap to call every loop tick, bails internally if not due. */
+    resp_run_autocorr_tick(now);
 
     if (now - last_tick_ms >= 1000) {
         last_tick_ms = now;
