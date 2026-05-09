@@ -114,6 +114,8 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   </div>
   <nav id="tabnav">
     <button data-tab="live"    class="active">Live</button>
+    <button data-tab="breath">Breath</button>
+    <button data-tab="step">Step</button>
     <button data-tab="tune">Tune</button>
     <button data-tab="system">System</button>
     <button data-tab="network">Network</button>
@@ -153,6 +155,149 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
   </div>
 </div>
 
+<!-- ─────────────── BREATH ─────────────── -->
+<div class="tab" id="tab-breath">
+  <div class="section">
+    <h2>Live breath waveform</h2>
+    <div class="resp-status" style="display:flex;align-items:center;gap:14px;margin:6px 0 10px;flex-wrap:wrap">
+      <div id="respPulse" style="font-size:48px;line-height:1;color:#5fdc7a;opacity:0.18;transition:opacity .3s,transform .3s">●</div>
+      <div id="respPhase" style="padding:8px 18px;border-radius:24px;background:#2d3748;color:#a0aec0;font-weight:bold;font-size:15px">— FLAT</div>
+      <div id="respLastAge" style="color:#94a3b8;font-size:13px">no breaths yet</div>
+    </div>
+    <canvas id="respWave" width="1200" height="260" style="background:#0e1116;border-radius:8px;width:100%"></canvas>
+    <div class="hint" style="margin-top:6px">blue line = chosen axis · grey line = running mean · green fill above mean = inhaling · peach fill below = exhaling · vertical green flash = detected breath (rising mean cross)</div>
+    <div class="cards" style="margin-top:14px;grid-template-columns:repeat(4,1fr)">
+      <div class="card"><div class="lbl">Last interval</div><div id="rIvl" class="val">—</div><div class="sub">since previous breath</div></div>
+      <div class="card"><div class="lbl">Depth (peak-to-peak)</div><div id="rDepth" class="val">—</div><div class="sub" id="rPhaseSub">—</div></div>
+      <div class="card"><div class="lbl">Instant BPM</div><div id="rIBpm" class="val">—</div><div class="sub">60 000 / last interval</div></div>
+      <div class="card"><div class="lbl">Total breaths</div><div id="rTot" class="val">0</div><div class="sub" id="rMean">running mean —</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Detection settings</h2>
+    <div class="row"><label>Detection axis</label>
+      <select id="rAxis"><option value="z">Z</option><option value="x">X</option><option value="y">Y</option></select>
+      <span class="num" style="font-size:11px">try X / Y if Z is flat for your device mounting</span>
+    </div>
+    <div class="row"><label>Min interval</label>
+      <input type="range" id="rMin" min="500" max="7500" step="100" value="1500">
+      <span id="rMinV" class="num">1500 ms</span></div>
+    <div class="row"><label>Min amplitude</label>
+      <input type="range" id="rAmp" min="0" max="100" step="1" value="10">
+      <span id="rAmpV" class="num">10 mg</span></div>
+    <div class="row"><label>Mean tracker α</label>
+      <input type="range" id="rAlpha" min="100" max="8192" step="50" value="1638">
+      <span id="rAlphaV" class="num">1638 (slow)</span></div>
+    <div class="note">A breath = one rising cross of the running mean. <strong>Min interval</strong>
+      rejects double-counts (1500 ms ≈ 40 BPM ceiling — drop to 800 ms for hyperventilation).
+      <strong>Min amplitude</strong> rejects noise crossings — peak-to-peak depth of the previous
+      cycle must clear this. Raise it to kill phantom events on a still surface, lower it to catch
+      shallow breaths. <strong>α</strong> is the IIR mean-tracker speed: lower = more stable, higher
+      = catches drift faster but more sensitive to noise. Defaults are tuned for normal seated
+      breathing — fast / deep breaths usually need axis swap or higher amp.</div>
+  </div>
+
+  <div class="section">
+    <h2>v1 windowed BPM (parallel)</h2>
+    <div class="row"><label>BPM filter min</label>
+      <input type="range" id="bpmMin" min="1" max="20" step="1" value="8">
+      <span id="bpmMinV" class="num">8 BPM</span></div>
+    <div class="row"><label>BPM filter max</label>
+      <input type="range" id="bpmMax" min="15" max="60" step="1" value="30">
+      <span id="bpmMaxV" class="num">30 BPM</span></div>
+    <div class="row"><label>Window length</label>
+      <input type="range" id="respWin" min="5" max="15" step="1" value="10">
+      <span id="respWinV" class="num">10 s</span></div>
+    <div class="note">v1 windowed BPM still drives the Live tab BPM card. Window resets when length changes.</div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn warn" onclick="rst('/resp/reset')">Reset breathing analyzer</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Recent breaths <span class="hint">— last 12 events from the device ring</span></h2>
+    <table id="respTable" style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="text-align:left;color:#94a3b8"><th style="padding:6px 0">#</th><th>Age</th><th>Interval</th><th>Depth</th><th>Inst BPM</th></tr></thead>
+      <tbody id="respTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ─────────────── STEP ─────────────── -->
+<div class="tab" id="tab-step">
+  <div class="section">
+    <h2>Live step trace</h2>
+    <canvas id="stepTrace" width="1200" height="220" style="background:#0e1116;border-radius:8px;width:100%"></canvas>
+    <div class="hint" style="margin-top:6px">blue = signal · red dashed = effective threshold · green ticks (bottom) = detected steps · yellow ticks (top) = ground truth taps</div>
+    <div class="cards" style="margin-top:14px;grid-template-columns:repeat(4,1fr)">
+      <div class="card"><div class="lbl">Count</div><div id="stStep" class="val">0</div><div class="sub" id="stCad">—</div></div>
+      <div class="card"><div class="lbl">Effective threshold</div><div id="sThr" class="val">—</div><div class="sub" id="sThrSub">base / adaptive</div></div>
+      <div class="card"><div class="lbl">Total events</div><div id="sTot" class="val">0</div><div class="sub">peaks since boot</div></div>
+      <div class="card"><div class="lbl">Detection axis</div><div id="sAxisCur" class="val">mag</div><div class="sub" id="sFlags">adaptive: off · bp: off</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Detection settings</h2>
+    <div class="row"><label>Peak threshold (base)</label>
+      <input type="range" id="stpThr" min="50" max="500" step="10" value="200">
+      <span id="stpThrV" class="num">200 mg</span></div>
+    <div class="row"><label>Min interval (fast)</label>
+      <input type="range" id="stpMin" min="100" max="600" step="10" value="300">
+      <span id="stpMinV" class="num">300 ms</span></div>
+    <div class="row"><label>Max interval (slow)</label>
+      <input type="range" id="stpMax" min="800" max="3000" step="50" value="1500">
+      <span id="stpMaxV" class="num">1500 ms</span></div>
+    <div class="row"><label>Detection axis</label>
+      <select id="sAxis"><option value="mag">|mag|</option><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
+    </div>
+    <div class="modeline">
+      <label><input type="checkbox" id="sAdapt" onchange="sToggle('step_adaptive',this.checked)"> Adaptive threshold</label>
+      <label style="margin-left:16px"><input type="checkbox" id="sBp" onchange="sToggle('step_bandpass',this.checked)"> Bandpass IIR (0.5–3 Hz)</label>
+    </div>
+    <div class="row"><label>Adaptive window</label>
+      <input type="range" id="sAmpW" min="500" max="5000" step="100" value="2000">
+      <span id="sAmpWV" class="num">2000 ms</span></div>
+    <div class="note">A step = signal &gt; effective threshold (rising edge), with min ≤ time-since-last ≤ max.
+      <strong>Adaptive</strong> tracks peak-to-peak amplitude over the adaptive window and sets threshold
+      to max(80 mg, 50 % × amp). <strong>Bandpass</strong> replaces the slow EMA baseline with an
+      IIR HPF→LPF cascade — kills typing / clapping / driving vibration. Try axis Z for vertical impact
+      cleaner than collapsed |mag|.</div>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn warn" onclick="rst('/steps/reset')">Reset step counter</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Ground truth + precision/recall</h2>
+    <button class="btn primary" onclick="gtTap()" style="width:100%;height:80px;font-size:20px;font-weight:bold">TAP on each real step</button>
+    <div class="actions" style="margin-top:8px">
+      <button class="btn warn" onclick="gtClear()">Clear taps</button>
+      <button class="btn act"  onclick="gtEval()">Eval (last 30 s, ±300 ms)</button>
+      <span class="num" style="font-size:13px;margin-left:8px">taps: <span id="gtCount">0</span></span>
+    </div>
+    <div id="gtResult" class="kv" style="margin-top:10px">
+      <dt>Detected</dt><dd id="evDet">—</dd>
+      <dt>Ground truth</dt><dd id="evGt">—</dd>
+      <dt>Matched</dt><dd id="evM">—</dd>
+      <dt>Precision</dt><dd id="evP">—</dd>
+      <dt>Recall</dt><dd id="evR">—</dd>
+    </div>
+    <div class="note">Walk a known count, tap the button on every <em>real</em> step, hit Eval.
+      Greedy nearest-match within tolerance. Precision = matched / detected.
+      Recall = matched / ground truth. Both at 100 % means the algorithm sees exactly your steps.</div>
+  </div>
+
+  <div class="section">
+    <h2>Recent steps <span class="hint">— last 12 events from the device ring</span></h2>
+    <table id="stepTable" style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead><tr style="text-align:left;color:#94a3b8"><th style="padding:6px 0">#</th><th>Age</th><th>Interval</th><th>Amplitude</th><th>Cadence</th></tr></thead>
+      <tbody id="stepTableBody"></tbody>
+    </table>
+  </div>
+</div>
+
 <!-- ─────────────── TUNE ─────────────── -->
 <div class="tab" id="tab-tune">
   <div class="section">
@@ -178,89 +323,10 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <strong>Live diagnostics</strong> on the wear card show which signal kept it on.</div>
   </div>
 
-  <div class="section">
-    <h2>Step counter</h2>
-    <div class="row"><label>Peak threshold</label>
-      <input type="range" id="stpThr" min="50" max="500" step="10" value="200">
-      <span id="stpThrV" class="num">200 mg</span></div>
-    <div class="row"><label>Min interval (fast)</label>
-      <input type="range" id="stpMin" min="100" max="600" step="10" value="300">
-      <span id="stpMinV" class="num">300 ms</span></div>
-    <div class="row"><label>Max interval (slow)</label>
-      <input type="range" id="stpMax" min="800" max="3000" step="50" value="1500">
-      <span id="stpMaxV" class="num">1500 ms</span></div>
-    <div class="row"><label>Detection axis (v2)</label>
-      <select id="sAxis"><option value="mag">|mag|</option><option value="x">X</option><option value="y">Y</option><option value="z">Z</option></select>
-    </div>
-    <div class="modeline">
-      <label><input type="checkbox" id="sAdapt" onchange="sToggle('step_adaptive',this.checked)"> Adaptive threshold (v2)</label>
-      <label style="margin-left:16px"><input type="checkbox" id="sBp" onchange="sToggle('step_bandpass',this.checked)"> Bandpass IIR (0.5–3 Hz)</label>
-    </div>
-    <div class="row"><label>Adaptive window (v2)</label>
-      <input type="range" id="sAmpW" min="500" max="5000" step="100" value="2000">
-      <span id="sAmpWV" class="num">2000 ms</span></div>
-    <div class="note">|mag − baseline| &gt; threshold → peak. Counts only if min ≤ time-since-last ≤ max.
-      <strong>Adaptive</strong> sets threshold = max(80 mg, 50 % × peak-to-peak amplitude over the
-      adaptive window) — auto-calibrates per user. <strong>Bandpass</strong> replaces the slow-EMA
-      baseline with a 0.5–3 Hz IIR filter, killing typing/clapping/driving noise.</div>
-    <div style="margin-top:12px">
-      <div class="lbl">Step trace <span class="hint">— blue = signal, red dashed = effective threshold, green ticks = detected steps, yellow ticks = ground truth</span></div>
-      <canvas id="stepTrace" width="900" height="140" style="background:#0e1116;border-radius:6px;margin-top:6px;width:100%"></canvas>
-    </div>
-    <div class="kv" style="margin-top:8px">
-      <dt>Effective threshold</dt><dd id="sThr">—</dd>
-      <dt>Total events</dt><dd id="sTot">0</dd>
-    </div>
-  </div>
-
-  <div class="section">
-    <h2>Step ground truth + eval</h2>
-    <button class="btn primary" onclick="gtTap()" style="width:100%;height:64px;font-size:18px">TAP on each real step</button>
-    <div class="actions" style="margin-top:8px">
-      <button class="btn warn" onclick="gtClear()">Clear taps</button>
-      <button class="btn act"  onclick="gtEval()">Eval (last 30 s, ±300 ms)</button>
-      <span class="num" style="font-size:13px;margin-left:8px">taps: <span id="gtCount">0</span></span>
-    </div>
-    <div id="gtResult" class="kv" style="margin-top:10px">
-      <dt>Detected</dt><dd id="evDet">—</dd>
-      <dt>Ground truth</dt><dd id="evGt">—</dd>
-      <dt>Matched</dt><dd id="evM">—</dd>
-      <dt>Precision</dt><dd id="evP">—</dd>
-      <dt>Recall</dt><dd id="evR">—</dd>
-    </div>
-    <div class="note">Tap the button on every <em>real</em> step you take. Then walk a known count, then hit Eval. Greedy nearest-match within tolerance ms. Precision = matched / detected · Recall = matched / groundtruth.</div>
-  </div>
-
-  <div class="section">
-    <h2>Respiration / breathing sensitivity</h2>
-    <div class="row"><label>BPM filter min</label>
-      <input type="range" id="bpmMin" min="1" max="20" step="1" value="8">
-      <span id="bpmMinV" class="num">8 BPM</span></div>
-    <div class="row"><label>BPM filter max</label>
-      <input type="range" id="bpmMax" min="15" max="60" step="1" value="30">
-      <span id="bpmMaxV" class="num">30 BPM</span></div>
-    <div class="row"><label>Window length</label>
-      <input type="range" id="respWin" min="5" max="15" step="1" value="10">
-      <span id="respWinV" class="num">10 s</span></div>
-    <div class="row"><label>Min interval (v2)</label>
-      <input type="range" id="rMin" min="1000" max="7500" step="100" value="2000">
-      <span id="rMinV" class="num">2000 ms</span></div>
-    <div class="row"><label>Mean tracker α (v2)</label>
-      <input type="range" id="rAlpha" min="100" max="8192" step="50" value="1638">
-      <span id="rAlphaV" class="num">1638 (slow)</span></div>
-    <div class="note">v1 windowed BPM still drives the live card. v2 also runs an online peak detector
-      with an IIR mean tracker — emits a per-breath event whenever Z crosses the running mean upward,
-      with peaks at least <em>min interval</em> apart. Lower α = slower mean (more stable, slower
-      to adapt). Higher α = faster mean (catches drift, more sensitive to noise).</div>
-    <div style="margin-top:12px">
-      <div class="lbl">Breath waveform <span class="hint">— last 12 s; blue = z, grey = mean, red ticks = detected breaths</span></div>
-      <canvas id="respWave" width="900" height="140" style="background:#0e1116;border-radius:6px;margin-top:6px;width:100%"></canvas>
-    </div>
-    <div class="kv" style="margin-top:8px">
-      <dt>Instant BPM</dt><dd id="rIBpm">—</dd>
-      <dt>Total events</dt><dd id="rTot">0</dd>
-      <dt>Running mean</dt><dd id="rMean">—</dd>
-    </div>
+  <div class="note" style="margin:14px 0">
+    <strong>Steps</strong> and <strong>Breath</strong> have their own dedicated tabs above
+    with full plots, event tables, and detection-axis controls. Tune tab is left for
+    bench essentials only.
   </div>
 
   <div class="section">
@@ -500,7 +566,7 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
 
 <script>
 /* ── Tab switching ───────────────────────────────────────────────────────── */
-const TABS=['live','tune','system','network','find','voice'];
+const TABS=['live','breath','step','tune','system','network','find','voice'];
 function showTab(name){
   TABS.forEach(t=>{
     document.getElementById('tab-'+t).classList.toggle('active',t===name);
@@ -508,6 +574,8 @@ function showTab(name){
   });
   if(name==='network'){fetchWifi();fetchSystem();}
   if(name==='voice'){fetchVoice();fetchStt();}
+  if(name==='breath'){drawRespWave();}
+  if(name==='step'){drawStepTrace();}
 }
 document.querySelectorAll('#tabnav button').forEach(b=>{
   b.addEventListener('click',()=>showTab(b.dataset.tab));
@@ -576,6 +644,9 @@ async function tick(){
     setText('ws',ws);
     setText('st',d.steps);
     setText('cad',d.step_cadence_ms>0?d.step_cadence_ms+' ms · '+d.steps_per_min+' /min':'—');
+    /* mirror onto Step tab cards if present */
+    setText('stStep', d.steps);
+    setText('stCad',  d.step_cadence_ms>0?d.step_cadence_ms+' ms · '+d.steps_per_min+' /min':'—');
     const bpmEl=document.getElementById('bpm');
     const bpmCard=document.getElementById('bpmcard');
     bpmEl.textContent=(d.bpm_valid?d.bpm:d.bpm_raw)||'—';
@@ -608,6 +679,8 @@ async function tick(){
       setSlider('respWin',d.cfg.resp_window_sec,'s');
       if('resp_min_interval_ms' in d.cfg) setSlider('rMin',d.cfg.resp_min_interval_ms,'ms');
       if('resp_iir_alpha_q15' in d.cfg) setSlider('rAlpha',d.cfg.resp_iir_alpha_q15,d.cfg.resp_iir_alpha_q15>3000?'(fast)':'(slow)');
+      if('resp_min_amplitude_mg' in d.cfg) setSlider('rAmp',d.cfg.resp_min_amplitude_mg,'mg');
+      if('resp_axis' in d.cfg) setSel('rAxis',d.cfg.resp_axis);
       if('step_axis' in d.cfg) setSel('sAxis',d.cfg.step_axis);
       if('step_adaptive' in d.cfg) document.getElementById('sAdapt').checked=d.cfg.step_adaptive;
       if('step_bandpass' in d.cfg) document.getElementById('sBp').checked=d.cfg.step_bandpass;
@@ -665,11 +738,36 @@ async function tick2(){
     if(d.resp){
       setText('rIBpm', d.resp.instant_bpm? d.resp.instant_bpm+' BPM' : '—');
       setText('rTot',  d.resp.total_events);
-      setText('rMean', d.resp.mean+' mg');
+      setText('rMean', 'running mean '+d.resp.mean+' mg');
+      setText('rDepth', d.resp.amplitude_mg ? d.resp.amplitude_mg+' mg' : '— mg');
+      setText('rPhaseSub','axis '+(d.resp.axis||'z').toUpperCase()+' · gate '+(d.resp.min_amplitude_mg||0)+' mg');
+      const ivl=d.resp.last_interval_ms||0;
+      setText('rIvl', ivl ? (ivl<1000? ivl+' ms' : (ivl/1000).toFixed(2)+' s') : '—');
+      const lastPeak=d.resp.last_peak_ms||0;
+      const ageEl=document.getElementById('respLastAge');
+      if(ageEl){
+        if(lastPeak>0){
+          const dnow=d.t||0;
+          const age=dnow>=lastPeak?(dnow-lastPeak):0;
+          ageEl.textContent='last breath '+(age<1000?age+' ms':(age/1000).toFixed(1)+' s')+' ago';
+        }else{
+          ageEl.textContent='no breaths yet';
+        }
+      }
+      const phase=d.resp.phase||'flat';
+      const ph=document.getElementById('respPhase');
+      if(ph){
+        if(phase==='inhale'){ph.style.background='#22543d';ph.style.color='#9ae6b4';ph.textContent='● INHALING';}
+        else if(phase==='exhale'){ph.style.background='#7b341e';ph.style.color='#fbd38d';ph.textContent='○ EXHALING';}
+        else{ph.style.background='#2d3748';ph.style.color='#a0aec0';ph.textContent='— FLAT';}
+      }
     }
     if(d.steps){
       setText('sThr', d.steps.threshold+' mg');
+      setText('sThrSub', d.steps.adaptive ? 'adaptive ON' : 'fixed (base)');
       setText('sTot', d.steps.total_events);
+      setText('sAxisCur', (d.steps.axis||'mag').toUpperCase());
+      setText('sFlags', 'adaptive: '+(d.steps.adaptive?'on':'off')+' · bp: '+(d.steps.bandpass?'on':'off'));
       setText('gtCount', d.steps.gt_count);
       /* push to step trace ring */
       stepTrace.push({t:Date.now(), s:d.steps.signal, thr:d.steps.threshold});
@@ -680,10 +778,28 @@ async function tick2(){
 }
 setInterval(tick2,1000);tick2();
 
-/* ── Step trace (Tune tab) — rolling 60 s ────────────────────────────── */
+/* ── Step trace (Step tab) — rolling 60 s ────────────────────────────── */
 const stepTrace=[];const stepMarks=[];const gtMarks=[];let stepLastEvtT=0;
+let stepRecent=[];
+function refreshStepTable(){
+  const tb=document.getElementById('stepTableBody');if(!tb)return;
+  const now=Date.now();
+  const rows=stepRecent.slice(-12).reverse().map((e,i)=>{
+    const age=fmtAge(Math.max(0,now-(e._added||now)));
+    const intv=e.int? (e.int+' ms') : '—';
+    const cad=e.int? ((60000/e.int).toFixed(1)+' /min') : '—';
+    return '<tr style="border-top:1px solid #334155">'
+      +'<td style="padding:4px 0">'+(stepRecent.length-i)+'</td>'
+      +'<td>'+age+'</td>'
+      +'<td>'+intv+'</td>'
+      +'<td>'+e.amp+' mg</td>'
+      +'<td>'+cad+'</td>'
+      +'</tr>';
+  }).join('');
+  tb.innerHTML=rows||'<tr><td colspan="5" style="padding:6px 0;color:#94a3b8">no steps yet</td></tr>';
+}
 async function drawStepTrace(){
-  if(!document.getElementById('tab-tune').classList.contains('active'))return;
+  if(!document.getElementById('tab-step').classList.contains('active'))return;
   const cv=document.getElementById('stepTrace');if(!cv)return;
   /* fetch new events */
   try{
@@ -691,9 +807,14 @@ async function drawStepTrace(){
     const d=await r.json();
     if(d.events&&d.events.length){
       const nowAbs=Date.now();
-      d.events.forEach(e=>stepMarks.push({t:e.t,added:nowAbs}));
+      d.events.forEach(e=>{
+        stepMarks.push({t:e.t,added:nowAbs});
+        stepRecent.push({t:e.t,amp:e.amp,int:e.int,_added:nowAbs});
+      });
+      while(stepRecent.length>12)stepRecent.shift();
       stepLastEvtT=d.events[d.events.length-1].t;
     }
+    refreshStepTable();
   }catch(e){}
   /* prune old marks */
   const cutMs=Date.now()-60000;
@@ -740,61 +861,133 @@ async function drawStepTrace(){
 }
 setInterval(drawStepTrace,500);
 
-/* ── Breath waveform (Tune tab) ──────────────────────────────────────────── */
-let respLastEvtT=0;let respMarks=[];
+/* ── Breath tab — waveform + recent table + pulse ──────────────────────── */
+let respLastEvtT=0;
+let respLastTotal=0;
+let respRecent=[];           /* {t,amp,int} list, last 12 from device */
+let respPulseUntil=0;
+function respPulse(){
+  respPulseUntil=Date.now()+450;
+  const el=document.getElementById('respPulse');if(!el)return;
+  el.style.opacity='1';el.style.transform='scale(1.5)';
+  setTimeout(()=>{el.style.opacity='0.18';el.style.transform='scale(1)';},420);
+}
+function fmtAge(ms){
+  if(ms<1000)return ms+' ms';
+  const s=ms/1000;if(s<60)return s.toFixed(1)+' s';
+  const m=s/60;return m.toFixed(1)+' min';
+}
+function refreshRespTable(){
+  const tb=document.getElementById('respTableBody');if(!tb)return;
+  const now=Date.now();
+  const rows=respRecent.slice(-12).reverse().map((e,i)=>{
+    const age=fmtAge(Math.max(0,now-(e._added||now)));
+    const intv=e.int? (e.int+' ms ('+(60000/e.int).toFixed(1)+' BPM)') : '—';
+    return '<tr style="border-top:1px solid #334155">'
+      +'<td style="padding:4px 0">'+(respRecent.length-i)+'</td>'
+      +'<td>'+age+'</td>'
+      +'<td>'+intv+'</td>'
+      +'<td>'+e.amp+' mg</td>'
+      +'<td>'+(e.int?(60000/e.int).toFixed(1):'—')+'</td>'
+      +'</tr>';
+  }).join('');
+  tb.innerHTML=rows||'<tr><td colspan="5" style="padding:6px 0;color:#94a3b8">no breaths yet</td></tr>';
+}
 async function drawRespWave(){
-  if(!document.getElementById('tab-tune').classList.contains('active'))return;
+  if(!document.getElementById('tab-breath').classList.contains('active'))return;
   const cv=document.getElementById('respWave');if(!cv)return;
   try{
     const [wr,er]=await Promise.all([
       fetch('/resp/wave?n=300',{cache:'no-store'}).then(r=>r.json()),
       fetch('/resp/events?since='+respLastEvtT,{cache:'no-store'}).then(r=>r.json()),
     ]);
-    /* track newest event time so we don't re-fetch the same ones */
     if(er.events&&er.events.length){
       const nowAbs=Date.now();
-      er.events.forEach(e=>{respMarks.push({t:e.t,added:nowAbs});});
+      er.events.forEach(e=>{
+        respRecent.push({t:e.t,amp:e.amp,int:e.int,_added:nowAbs});
+      });
+      while(respRecent.length>12)respRecent.shift();
       respLastEvtT=er.events[er.events.length-1].t;
     }
-    /* drop marks older than wave window (~12 s) */
-    const cutT=Date.now()-13000;
-    respMarks=respMarks.filter(m=>m.added>cutT);
-    /* draw */
+    /* trigger pulse if total event count climbed */
+    if(typeof er.total==='number'){
+      if(respLastTotal>0 && er.total>respLastTotal) respPulse();
+      respLastTotal=er.total;
+    }
+    refreshRespTable();
+    /* draw waveform with device-time positioning */
     const ctx=cv.getContext('2d');const W=cv.width,H=cv.height;
     ctx.clearRect(0,0,W,H);
     ctx.fillStyle='#0e1116';ctx.fillRect(0,0,W,H);
     if(!wr.z||!wr.z.length){return;}
+    /* compute y-range from data with floor for tiny signals */
     let mn=Infinity,mx=-Infinity;
     for(let i=0;i<wr.z.length;i++){if(wr.z[i]<mn)mn=wr.z[i];if(wr.z[i]>mx)mx=wr.z[i];}
     for(let i=0;i<wr.m.length;i++){if(wr.m[i]<mn)mn=wr.m[i];if(wr.m[i]>mx)mx=wr.m[i];}
-    if(mx-mn<10){mx=mn+10;}
-    const pad=4;const yScale=(H-2*pad)/(mx-mn);
+    if(mx-mn<20){const c=(mn+mx)/2;mn=c-10;mx=c+10;}
+    const pad=10;const yScale=(H-2*pad)/(mx-mn);
     const xScale=W/wr.z.length;
-    /* mean line (grey) */
-    ctx.strokeStyle='#6b7280';ctx.lineWidth=1;ctx.beginPath();
+    /* device-time mapping: oldest sample at left, newest at right */
+    const periodMs=wr.period_ms||40;
+    const devNow=wr.now||0;
+    const oldestT=devNow-(wr.z.length-1)*periodMs;
+    const xOfDevT=t=>(t-oldestT)/((devNow-oldestT)||1)*W;
+    /* fills: green above mean (inhale), peach below (exhale) */
+    ctx.fillStyle='rgba(95,220,122,0.18)';
+    ctx.beginPath();ctx.moveTo(0,H-pad-(wr.m[0]-mn)*yScale);
+    for(let i=0;i<wr.z.length;i++){
+      const x=i*xScale;const y=H-pad-(Math.max(wr.z[i],wr.m[i])-mn)*yScale;
+      ctx.lineTo(x,y);
+    }
+    for(let i=wr.m.length-1;i>=0;i--){
+      const x=i*xScale;const y=H-pad-(wr.m[i]-mn)*yScale;
+      ctx.lineTo(x,y);
+    }
+    ctx.closePath();ctx.fill();
+    ctx.fillStyle='rgba(251,191,36,0.13)';
+    ctx.beginPath();ctx.moveTo(0,H-pad-(wr.m[0]-mn)*yScale);
+    for(let i=0;i<wr.z.length;i++){
+      const x=i*xScale;const y=H-pad-(Math.min(wr.z[i],wr.m[i])-mn)*yScale;
+      ctx.lineTo(x,y);
+    }
+    for(let i=wr.m.length-1;i>=0;i--){
+      const x=i*xScale;const y=H-pad-(wr.m[i]-mn)*yScale;
+      ctx.lineTo(x,y);
+    }
+    ctx.closePath();ctx.fill();
+    /* mean line */
+    ctx.strokeStyle='#94a3b8';ctx.lineWidth=1.2;ctx.beginPath();
     for(let i=0;i<wr.m.length;i++){
       const x=i*xScale,y=H-pad-(wr.m[i]-mn)*yScale;
       if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
     }
     ctx.stroke();
-    /* z signal (blue) */
-    ctx.strokeStyle='#5aa9ff';ctx.lineWidth=1.5;ctx.beginPath();
+    /* signal */
+    ctx.strokeStyle='#5aa9ff';ctx.lineWidth=2.4;ctx.beginPath();
     for(let i=0;i<wr.z.length;i++){
       const x=i*xScale,y=H-pad-(wr.z[i]-mn)*yScale;
       if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
     }
     ctx.stroke();
-    /* event ticks (red) — relative position by added-time vs window */
-    ctx.strokeStyle='#e58383';ctx.lineWidth=2;
-    const winMs=12000;const nowMs=Date.now();
-    respMarks.forEach(m=>{
-      const ageMs=nowMs-m.added;if(ageMs>winMs)return;
-      const x=W*(1-ageMs/winMs);
+    /* event vertical bands — bright when fresh, fading thereafter */
+    respRecent.forEach(e=>{
+      if(e.t<oldestT)return;
+      const x=xOfDevT(e.t);if(x<0||x>W)return;
+      const ageMs=devNow-e.t;
+      const alpha=Math.max(0.25,1-ageMs/12000);
+      ctx.strokeStyle='rgba(95,220,122,'+alpha+')';ctx.lineWidth=3;
       ctx.beginPath();ctx.moveTo(x,2);ctx.lineTo(x,H-2);ctx.stroke();
+      /* triangle marker at top */
+      ctx.fillStyle='rgba(95,220,122,'+alpha+')';
+      ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x-6,12);ctx.lineTo(x+6,12);ctx.closePath();ctx.fill();
     });
+    /* y-axis labels */
+    ctx.fillStyle='#64748b';ctx.font='11px monospace';
+    ctx.fillText(mx+' mg',6,12);
+    ctx.fillText(mn+' mg',6,H-4);
   }catch(e){}
 }
-setInterval(drawRespWave,500);
+setInterval(drawRespWave,400);
 
 /* ── Slider/Selector handlers ────────────────────────────────────────────── */
 function bindSlider(id,unit,key,debounce){
@@ -820,6 +1013,8 @@ bindSlider('wVar','mg','wear_var_thresh_mg');
 bindSlider('wGrav','mg','wear_grav_diff_thresh_mg');
 bindSlider('rMin','ms','resp_min_interval_ms');
 bindSlider('rAlpha','','resp_iir_alpha_q15');
+bindSlider('rAmp','mg','resp_min_amplitude_mg');
+document.getElementById('rAxis').addEventListener('change',e=>{suppress();pj('/config',JSON.stringify({resp_axis:e.target.value}));});
 bindSlider('sAmpW','ms','step_amp_window_ms');
 
 document.getElementById('sAxis').addEventListener('change',e=>{suppress();pj('/config',JSON.stringify({step_axis:e.target.value}));});
