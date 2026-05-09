@@ -55,7 +55,10 @@ IDE; from `arduino-cli`, point at `firmware/` (see commands below).
 | `wear.cpp/.h` | on-body / off-body state machine |
 | `respiration.cpp/.h` | BPM analysis over a 10 s window |
 | `steps.cpp/.h` | peak-detect step counter |
-| `mode.cpp/.h` | OFF / NORMAL / TURBO ionizer simulator |
+| `mode.cpp/.h` | OFF / NORMAL / TURBO / AUTO ionizer simulator |
+| `cough.cpp/.h` | 5–15 Hz envelope cluster cough detector (100 Hz) |
+| `slouch.cpp/.h` | gravity-vector pitch-vs-baseline slouch detector (25 Hz) |
+| `fall.cpp/.h` | 3-stage free-fall → impact → stillness fall detector (100 Hz) |
 | `battsim.cpp/.h` | battery / charging simulator |
 | `samplelog.cpp/.h` | rolling CSV buffer for `/log.csv` |
 | `motionlog.cpp/.h` | motion-IRQ ring buffer |
@@ -124,3 +127,28 @@ Working. Voice capture tested with INMP441; DC blocker + noise gate added
 after first capture had hum. Deepgram REST integration ships in this push.
 Bench rig is the canonical reference for algorithm behaviour until the nRF
 firmware reaches feature parity.
+
+## Phase 2.5 milestone — 2026-05-10
+
+Five sequential commits ship the Phase-2.5 algorithm suite:
+
+1. **AUTO mode + Device tab + ODR 25→100 Hz.** New mode `APP_MODE_AUTO`
+   makes ionizer follow wear (production default); NORMAL/TURBO are
+   bench-only. Sample loop bumped to 100 Hz; resp/steps/wear decimated
+   1-in-4 to keep their 25 Hz calibration. Mode persisted to NVS.
+2. **Cough.** 5–15 Hz envelope cluster detector at 100 Hz. Cluster
+   gate: ≥ 3 peaks in 800 ms. GT taps + greedy nearest-match
+   precision/recall eval. New `/cough/*` endpoints.
+3. **Slouch.** Slow IIR gravity tracker → atan2 pitch → calibrated
+   baseline. Sustained deviation > thresh fires a session. "Sit Up
+   Straight" calibration baked into UI flow. NVS keys `sl_base/sl_thr/sl_sus`.
+4. **Fall.** 3-stage SM at 100 Hz: free-fall → impact → stillness.
+   60 s auto-decay back to IDLE after CONFIRMED. `/fall/simulate` for
+   UI exercise without dropping the device.
+5. **Live dashboard cards + docs.** Live tab gains 4 glance cards
+   (Mode/Cough/Slouch/Fall). Mode card cycles through values on click.
+   `/data` extended with 10 fields. algorithms.md, app.md, nrf
+   connect.md, README.md, aboutme.md all brought up to date.
+
+All five commits compile clean. Final image: 2,103,279 B flash (66%) /
+99,336 B RAM (30%). LIS2DW12 portability notes in `nrf connect.md`.

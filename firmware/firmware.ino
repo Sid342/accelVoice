@@ -135,8 +135,12 @@ static void apply_status_led(uint32_t now)
 /* ── /data live snapshot ────────────────────────────────────────────────── */
 static void handle_data(void)
 {
-    char buf[1024];
+    char buf[1536];
     cfg_t *c = cfg_get();
+    uint32_t cough_le = cough_last_event_ms();
+    uint32_t cough_age = cough_le ? (millis() - cough_le) : 0;
+    uint32_t fall_le = fall_last_fall_ms();
+    uint32_t fall_age = fall_le ? (millis() - fall_le) : 0;
     snprintf(buf, sizeof(buf),
         "{\"t\":%lu,"
         "\"uptime_s\":%lu,"
@@ -149,6 +153,9 @@ static void handle_data(void)
         "\"steps\":%lu,\"step_cadence_ms\":%lu,\"steps_per_min\":%u,"
         "\"mode\":\"%s\","
         "\"ionizer\":%s,"
+        "\"cough_total\":%lu,\"cough_per_min\":%u,\"cough_last_age_ms\":%lu,"
+        "\"slouch_state\":\"%s\",\"slouch_dev_deg_x10\":%d,"
+        "\"fall_state\":\"%s\",\"fall_total\":%lu,\"fall_last_age_ms\":%lu,"
         "\"battery\":{\"pct\":%u,\"charging\":%s,\"fault\":%s,\"state\":\"%s\"},"
         "\"motion_irq_count\":%lu,"
         "\"find\":{\"active\":%s,\"remaining_s\":%lu},"
@@ -170,6 +177,11 @@ static void handle_data(void)
         (unsigned long)steps_get_count(), (unsigned long)steps_get_cadence_ms(), steps_get_per_min(),
         mode_str(mode_get()),
         ionizer_state() ? "true" : "false",
+        (unsigned long)cough_total(), cough_rate_per_min(), (unsigned long)cough_age,
+        slouch_get_state() == SLOUCH_UPRIGHT ? "upright" :
+            (slouch_get_state() == SLOUCH_SLOUCHING ? "slouching" : "unknown"),
+        slouch_current_deviation_deg_x10(),
+        fall_state_str(fall_get_state()), (unsigned long)fall_total_falls(), (unsigned long)fall_age,
         battsim_get_pct(), battsim_is_charging() ? "true" : "false",
         battsim_is_fault() ? "true" : "false", battsim_state_str(battsim_get_state()),
         (unsigned long)motionlog_count(),

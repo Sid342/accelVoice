@@ -104,6 +104,7 @@ pre{background:#000;color:#9ee0ff;padding:8px;border-radius:6px;font-size:11px;
 .banner.warn{background:rgba(251,191,36,0.10);border:1px solid rgba(251,191,36,0.3);color:var(--amber)}
 .banner.ok{background:rgba(52,211,153,0.10);border:1px solid rgba(52,211,153,0.3);color:var(--green)}
 hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+@keyframes pulseRed{0%,100%{box-shadow:0 0 0 0 rgba(248,113,113,0)}50%{box-shadow:0 0 0 4px rgba(248,113,113,0.4)}}
 </style></head><body>
 
 <header>
@@ -139,6 +140,20 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <div class="card"><div class="lbl">Steps</div><div id="st" class="val">0</div><div class="sub" id="cad">—</div><div class="sub" id="cadx" style="font-size:11px;opacity:0.7">—</div></div>
       <div class="card" id="bpmcard"><div class="lbl">Respiration</div><div id="bpm" class="val">0</div><div class="sub" id="bsub">—</div></div>
       <div class="card"><div class="lbl">Ionizer (sim)</div><div id="ion" class="val off">OFF</div><div class="sub" id="isub">—</div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Phase 2.5 <span class="hint">— click Mode to cycle OFF/NORMAL/TURBO/AUTO</span></h2>
+    <div class="cards">
+      <div class="card" id="liveModeCard" style="cursor:pointer" onclick="cycleMode()">
+        <div class="lbl">Mode</div>
+        <div id="liveMode" class="val">…</div>
+        <div class="sub" id="liveModeSub">ionizer: —</div>
+      </div>
+      <div class="card"><div class="lbl">Cough</div><div id="liveCough" class="val">0</div><div class="sub" id="liveCoughSub">— /min · last —</div></div>
+      <div class="card"><div class="lbl">Slouch</div><div id="liveSlouch" class="val">UNKNOWN</div><div class="sub" id="liveSlouchSub">—</div></div>
+      <div class="card" id="liveFallCard"><div class="lbl">Fall</div><div id="liveFall" class="val">IDLE</div><div class="sub" id="liveFallSub">0 · last —</div></div>
     </div>
   </div>
 
@@ -885,6 +900,37 @@ async function tick(){
     ionEl.className='val '+(d.ionizer?'on':'off');
     setText('isub',d.mode.toUpperCase()+' · battery '+d.battery.state);
     setText('batSt','state='+d.battery.state);
+    /* Phase-2.5 Live cards */
+    const lmEl=document.getElementById('liveMode');
+    const lmCard=document.getElementById('liveModeCard');
+    if(lmEl){
+      lmEl.textContent=d.mode.toUpperCase();
+      const colors={off:'var(--dim)',normal:'var(--blue)',turbo:'var(--amber)',auto:'var(--green)'};
+      lmEl.style.color=colors[d.mode]||'var(--text)';
+      setText('liveModeSub','ionizer: '+(d.ionizer?'on':'off'));
+    }
+    setText('liveCough', (d.cough_total!=null?d.cough_total:0));
+    const cAge=d.cough_last_age_ms? fmtAgeShort(d.cough_last_age_ms) : '—';
+    setText('liveCoughSub', (d.cough_per_min||0)+' /min · last '+cAge);
+    const slEl=document.getElementById('liveSlouch');
+    if(slEl){
+      const ss=d.slouch_state||'unknown';
+      slEl.textContent=ss.toUpperCase();
+      slEl.className='val '+(ss==='upright'?'on':(ss==='slouching'?'off':''));
+      const dev=(d.slouch_dev_deg_x10||0)/10;
+      setText('liveSlouchSub', ss==='unknown'?'calibrate first':(dev.toFixed(1)+'° dev'));
+    }
+    const flEl=document.getElementById('liveFall');
+    const flCard=document.getElementById('liveFallCard');
+    if(flEl){
+      const fs=d.fall_state||'idle';
+      flEl.textContent=fs.toUpperCase().replace('_',' ');
+      flEl.className='val '+(fs==='confirmed'?'off':(fs==='idle'?'':'warn'));
+      flCard.style.borderColor = fs==='confirmed' ? 'var(--red)' : 'transparent';
+      flCard.style.animation = fs==='confirmed' ? 'pulseRed 0.8s ease-in-out infinite' : 'none';
+      const fAge=d.fall_last_age_ms? fmtAgeShort(d.fall_last_age_ms) : '—';
+      setText('liveFallSub', (d.fall_total||0)+' · last '+fAge);
+    }
     /* Plot */
     buf.x[head]=d.x;buf.y[head]=d.y;buf.z[head]=d.z;buf.mag[head]=d.mag;
     head=(head+1)%N;if(have<N)have++;
@@ -1297,6 +1343,13 @@ function highlightMode(m){
   document.querySelectorAll('#modeBtns button[data-mode]').forEach(b=>{
     b.classList.toggle('act', b.dataset.mode===m);
   });
+}
+const MODE_CYCLE=['off','normal','turbo','auto'];
+function cycleMode(){
+  const cur=document.getElementById('liveMode')?.textContent.toLowerCase()||'auto';
+  const i=Math.max(0,MODE_CYCLE.indexOf(cur));
+  const next=MODE_CYCLE[(i+1)%MODE_CYCLE.length];
+  suppress();pj('/mode',JSON.stringify({mode:next}));
 }
 document.getElementById('wearSel').addEventListener('change',e=>{suppress();pj('/wear/force',JSON.stringify({state:e.target.value}));});
 

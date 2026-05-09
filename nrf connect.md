@@ -48,6 +48,25 @@ design is a rig-only shortcut.
 | `ble_find` advertise | already BLE-native | trivial |
 | `voice.cpp` DSP (DC blocker + noise gate) | port byte-for-byte | pure C, no platform deps |
 
+## Phase 2.5 portability summary
+
+The Phase 2.5 features (cough, slouch, fall, AUTO mode, Live cards) are
+designed for direct LIS2DW12 portability. Quick cheat sheet:
+
+| Feature | Hardware change | Software change | Notes |
+|---|---|---|---|
+| **ODR 25→100 Hz** | LIS2DW12 `CTRL1.ODR=0x4` (LP1) | `ACCEL_FAST_ODR_HZ=100`, decimate 1-in-4 to wear/resp/steps | already done on bench |
+| **Cough** | none | port `cough.cpp` byte-for-byte | one slow IIR + two biquads + envelope LPF |
+| **Slouch** | none | port `slouch.cpp`; gate on wear+upright | float `atan2` per sample, 25 Hz |
+| **Fall** | LIS2DW12 free-fall + sleep IRQs | replace stage-1 dwell + stage-3 MAD with hardware IRQs | major code reduction in production |
+| **Mode AUTO** | none | port enum + `ionizer_state()`; default boot AUTO | NORMAL/TURBO are debug modes |
+| **Cough wave** | none | none — `/cough/wave` is bench-only | replace with BLE notification for production |
+
+**No gyro features.** LIS2DW12 has no gyro. None of the Phase-2.5
+algorithms (cough, slouch, fall) use a gyro signal. Anything the spec
+might suggest about gyro fusion (e.g. complementary filter) is
+intentionally absent.
+
 ## Phase 2.5 portability notes
 
 **ODR is now 100 Hz on the bench**, not 25 Hz. Cough (and the upcoming

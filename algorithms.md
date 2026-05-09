@@ -1,10 +1,21 @@
 # algorithms.md — what each algorithm does, why, and which knob does what
 
 This doc is the **single source of truth for the algorithm logic** running on
-the bench: wear detection, respiration BPM, step count, and voice DSP. Each
-section gives the current code's behaviour, what each tunable controls, and
-where the logic is known to be weak. Read `app.md` for the HTTP shape and
-`nrf connect.md` for the port plan; the same constants port to nRF directly.
+the bench: wear detection, respiration BPM, step count, cough/slouch/fall,
+and voice DSP. Each section gives the current code's behaviour, what each
+tunable controls, and where the logic is known to be weak. Read `app.md`
+for the HTTP shape and `nrf connect.md` for the port plan; the same
+constants port to nRF directly.
+
+## Phase 2.5 features at a glance
+
+| Feature | Source | Tab | One-liner |
+|---|---|---|---|
+| **Live dashboard** | `firmware.ino` `/data` | Live | 4 glance cards: Mode, Cough, Slouch, Fall |
+| **Device modes** | `mode.cpp` | Device | OFF / NORMAL / TURBO / AUTO; AUTO = production default |
+| **Cough** | `cough.cpp` | Cough | 100 Hz envelope cluster detector, 5–15 Hz band |
+| **Slouch** | `slouch.cpp` | Slouch | gravity-vector pitch vs calibrated baseline, 25 Hz |
+| **Fall** | `fall.cpp` | Fall | 3-stage SM: free-fall → impact → stillness, 100 Hz |
 
 All units are **mg** (1 mg = 1/1000 of 1 g; gravity ≈ 1000 mg) unless noted.
 The **sample loop ODR is 100 Hz** (Phase 2.5 bump). The 25 Hz consumers

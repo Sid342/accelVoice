@@ -1,9 +1,14 @@
 # accelVoice
 
-ESP32 bench rig for the Atovio nRF52 Phase 2.5 algorithms — wear / respiration
-/ steps / mode sim / battery sim / BLE find / voice capture / Deepgram STT —
-all controllable from a web UI at `http://192.168.4.1` so the bench can be
-tuned and validated without reflashing.
+ESP32 bench rig for the Atovio nRF52 Phase 2.5 algorithms — wear /
+respiration / steps / **cough** / **slouch** / **fall** / mode sim
+(OFF/NORMAL/TURBO/**AUTO**) / battery sim / BLE find / voice capture /
+Deepgram STT — all controllable from a web UI at `http://192.168.4.1` so
+the bench can be tuned and validated without reflashing.
+
+Sample loop runs at **100 Hz** (cough + fall consume the full rate; resp,
+steps, wear decimate to 25 Hz). All algorithms are accelerometer-only —
+no gyro features (LIS2DW12 production sensor has no gyro).
 
 ## Repo layout
 
@@ -21,6 +26,7 @@ tuned and validated without reflashing.
     ├── sketch.yaml
     ├── accel.{cpp,h}      wear.{cpp,h}        respiration.{cpp,h}
     ├── steps.{cpp,h}      mode.{cpp,h}        battsim.{cpp,h}
+    ├── cough.{cpp,h}      slouch.{cpp,h}      fall.{cpp,h}
     ├── samplelog.{cpp,h}  motionlog.{cpp,h}   find.{cpp,h}
     ├── wifi_sta.{cpp,h}   ble_find.{cpp,h}    config.{cpp,h}
     ├── voice.{cpp,h}      stt.{cpp,h}
