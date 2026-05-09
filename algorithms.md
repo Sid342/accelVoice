@@ -178,6 +178,59 @@ When the windowed BPM filter zeroes the value (raw outside [bpm_min,
 bpm_max]), the Live BPM card now shows the raw value as a sub-line so
 the failure is no longer silent.
 
+### v3 (shipped) — full literature-grounded pipeline
+
+The v2 detector is kept and now consumes the **post-fusion composite** instead
+of a raw axis. The full per-sample @ 25 Hz pipeline:
+
+```
+raw x_mg, y_mg, z_mg
+  ↓ 5-tap median per axis              (spike rejection — VMD paper trick)
+  ↓ 4th-order Butterworth band-pass    (cascade: HPF biquad + LPF biquad)
+       per axis, default 0.1–0.8 Hz    (Schipper 4th-order LPF 0.8 Hz)
+  ↓ PCA-lite axis fusion               (variance-weighted sum;
+       weights = EMAvar_i / Σ EMAvar    weights tracked over ~4 s)
+  ↓ Schmitt rising-cross @ mean        (re-arm requires dipping below mean−H
+       with hysteresis H_mg              before another cross above mean+H counts)
+  ↓ existing min_interval + min_amp gates
+  → emit event {t, amp, interval}     (waveform + event ring unchanged)
+```
+
+A second track runs in parallel: every 5 s, **autocorrelation** on the last
+N s of the composite (N = `resp_autocorr_window_sec`, default 30 s). The
+search is restricted to lags ∈ [31, 250] @ 25 Hz, i.e. the 12–48 BPM band.
+BPM = 1500 / arg-max-lag. Confidence is a z-score-style peak prominence:
+`(rxx[k*] − mean) / std × 30`, clamped 0..100. ~165 k mults per run, one
+run per 5 s — ~33 k mults/s on the ESP32 FPU, well under capacity.
+
+Why every step exists:
+- **Median filter**: motion-induced spikes (placement, hand contact) corrupt
+  the band-passed signal for many seconds. Median is non-linear and rejects
+  them without smearing breath edges.
+- **Per-axis Butterworth band-pass**: the breath band sits below 0.8 Hz for
+  rest, ≤0.7 Hz under exertion; everything above is heartbeat/motion, below
+  is gravity drift.
+- **PCA-lite**: Schipper et al. report single-axis Z LoA of ±18 BPM but
+  axis-fused (PCA) LoA of ±2 BPM — about 9× tighter — when the orientation
+  varies during wear.
+- **Schmitt hysteresis**: kills false re-triggers around the mean line
+  caused by ripple in the mean tracker.
+- **Adaptive band-pass**: on activity, breath rate climbs and the chest-axis
+  motion broadens — the cutoffs widen accordingly.
+- **Autocorrelation BPM**: independent BPM estimate that doesn't depend on
+  detecting individual events. When the per-event detector is in a noisy
+  regime, autocorrelation often still locks on the periodicity.
+
+Diagnostics on `/data2.resp`:
+- `pca_w{x,y,z}_q8` — current axis weights × 256 (sum ≈ 256)
+- `bp_low_active_x10`, `bp_high_active_x10` — current Butterworth cutoffs
+  (in 0.1 Hz units), reflect adaptive override when on
+- `activity_mg2_x10` — overall accel variance proxy in 0.1 mg² units
+- `bpm_autocorr` + `bpm_autocorr_confidence_pct` + `autocorr_age_ms`
+
+The Breath tab now shows a live PCA weight strip ("PCA  X 0.62  Y 0.21  Z 0.17"),
+the active band-pass band, the activity, and a fifth card for autocorr BPM.
+
 ### Respiration tunables
 
 | Knob | Default | Range | Unit | Meaning |
@@ -185,11 +238,40 @@ the failure is no longer silent.
 | `bpm_min` | 8 | 1–30 | BPM | windowed BPM filter low edge |
 | `bpm_max` | 30 | 5–60 | BPM | windowed BPM filter high edge |
 | `resp_window_sec` | 10 | 5–15 | s | length of the windowed-BPM ring |
-| `resp_min_interval_ms` | 2000 | 1000–7500 | ms | online detector: reject peaks closer than this |
-| `resp_iir_alpha_q15` | 1638 | 100–8192 | Q15 | online detector: mean-tracker speed |
+| `resp_min_interval_ms` | 1500 | 300–10000 | ms | online detector: reject peaks closer than this |
+| `resp_iir_alpha_q15` | 1638 | 50–16384 | Q15 | online detector: mean-tracker speed |
+| `resp_min_amplitude_mg` | 10 | 0–500 | mg | peak-to-peak gate |
+| `resp_axis` | pca | z/x/y/pca | — | detection axis; `pca` = variance-weighted fusion |
+| `resp_median_len` | 5 | 1/3/5/7/9 | taps | per-axis median (1 = off) |
+| `resp_bp_low_hz_x10` | 1 | 0–5 | 0.1 Hz | Butterworth HPF cutoff (0 = off) |
+| `resp_bp_high_hz_x10` | 8 | 0–12 | 0.1 Hz | Butterworth LPF cutoff (0 = off) |
+| `resp_hysteresis_mg` | 0 | 0–30 | mg | Schmitt re-arm deadband (0 = legacy) |
+| `resp_adaptive_bp` | false | bool | — | activity-driven cutoff override |
+| `resp_autocorr_window_sec` | 30 | 10–60 | s | autocorr analysis window |
 | `RESP_SAMPLE_HZ` | 25 | compile-time | Hz | must match ODR |
 | `RESP_EVENT_RING_SIZE` | 64 | compile-time | — | how many recent peaks to keep |
 | `RESP_WAVE_RING_SIZE` | 300 | compile-time | — | wave-ring length (~12 s @ 25 Hz) |
+
+Adaptive band-pass map (when `resp_adaptive_bp = true`):
+
+| Magnitude variance EMA | Active band |
+|---|---|
+| < 50 mg² (sitting / resting) | 0.1–0.5 Hz |
+| 50–500 mg² (walking) | 0.2–0.6 Hz |
+| ≥ 500 mg² (running / very active) | 0.3–0.7 Hz |
+
+> **References (consensus from the four cited papers).**
+> [1] Schipper et al. — abdominal accelerometry: 4th-order Butterworth LPF at
+> 0.8 Hz, PCA across XYZ, 60-s autocorrelation. Single-axis Z gave Limits of
+> Agreement of ±18 BPM; PCA-fused gave ±2 BPM (~9× tighter).
+> [2] PMC3203837 — adaptive Butterworth band-pass tied to activity:
+> rest 0.2–0.4 Hz, walking 0.2–0.6 Hz, running 0.3–0.7 Hz; HPF at 1 Hz.
+> [3] IEEE 10932997 (VMD paper) — preprocessing chain: normalize → median
+> filter → VMD → IMF₂ → peak detect. Median filter is the spike-rejection
+> step adopted here.
+> [4] Schipper et al. (autocorr methodology) — autocorrelation on a long
+> centered window with the dominant lag in the breath band as the BPM
+> estimator; confidence from peak prominence over the lag-result mean.
 
 ---
 
@@ -412,8 +494,16 @@ constants are listed for reference but cannot be changed without re-flashing.
 | `bpm_min` | 8 | 1–30 | BPM | yes | `cfg` |
 | `bpm_max` | 30 | 5–60 | BPM | yes | `cfg` |
 | `resp_window_sec` | 10 | 5–15 | s | yes | `cfg` |
-| `resp_min_interval_ms` | 2000 | 1000–7500 | ms | yes | `cfg` |
-| `resp_iir_alpha_q15` | 1638 | 100–8192 | Q15 | yes | `cfg` |
+| `resp_min_interval_ms` | 1500 | 300–10000 | ms | yes | `cfg` |
+| `resp_iir_alpha_q15` | 1638 | 50–16384 | Q15 | yes | `cfg` |
+| `resp_min_amplitude_mg` | 10 | 0–500 | mg | yes | `cfg` |
+| `resp_axis` | pca | z/x/y/pca | — | yes | `cfg` |
+| `resp_median_len` | 5 | 1/3/5/7/9 | taps | yes | `cfg` |
+| `resp_bp_low_hz_x10` | 1 | 0–5 | 0.1 Hz | yes | `cfg` |
+| `resp_bp_high_hz_x10` | 8 | 0–12 | 0.1 Hz | yes | `cfg` |
+| `resp_hysteresis_mg` | 0 | 0–30 | mg | yes | `cfg` |
+| `resp_adaptive_bp` | false | bool | — | yes | `cfg` |
+| `resp_autocorr_window_sec` | 30 | 10–60 | s | yes | `cfg` |
 
 ### Voice
 

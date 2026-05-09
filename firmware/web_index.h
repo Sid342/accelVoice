@@ -165,21 +165,60 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
       <div id="respLastAge" style="color:#94a3b8;font-size:13px">no breaths yet</div>
     </div>
     <canvas id="respWave" width="1200" height="260" style="background:#0e1116;border-radius:8px;width:100%"></canvas>
-    <div class="hint" style="margin-top:6px">blue line = chosen axis · grey line = running mean · green fill above mean = inhaling · peach fill below = exhaling · vertical green flash = detected breath (rising mean cross)</div>
-    <div class="cards" style="margin-top:14px;grid-template-columns:repeat(4,1fr)">
+    <div class="hint" style="margin-top:6px">blue line = composite signal (post-median + Butterworth + PCA-lite) · grey line = running mean · green fill above mean = inhaling · peach fill below = exhaling · vertical green flash = detected breath (Schmitt rising cross)</div>
+    <div id="respV3Diag" style="margin-top:10px;padding:8px 12px;background:#0e1116;border-radius:6px;font-family:monospace;font-size:12px;color:#94a3b8;display:flex;flex-wrap:wrap;gap:18px">
+      <span>PCA <span style="color:#5aa9ff" id="rPcaW">— —</span></span>
+      <span>BPF <span style="color:#fbbf24" id="rBpAct">— Hz</span></span>
+      <span>Activity <span style="color:#a0aec0" id="rActiv">— mg²</span></span>
+      <span>Median <span style="color:#a0aec0" id="rMedAct">—</span></span>
+      <span>Hyst <span style="color:#a0aec0" id="rHystAct">—</span></span>
+    </div>
+    <div class="cards" style="margin-top:14px;grid-template-columns:repeat(5,1fr)">
       <div class="card"><div class="lbl">Last interval</div><div id="rIvl" class="val">—</div><div class="sub">since previous breath</div></div>
       <div class="card"><div class="lbl">Depth (peak-to-peak)</div><div id="rDepth" class="val">—</div><div class="sub" id="rPhaseSub">—</div></div>
       <div class="card"><div class="lbl">Instant BPM</div><div id="rIBpm" class="val">—</div><div class="sub">60 000 / last interval</div></div>
+      <div class="card"><div class="lbl">Autocorr BPM</div><div id="rAcBpm" class="val">—</div><div class="sub" id="rAcSub">conf — · age —</div></div>
       <div class="card"><div class="lbl">Total breaths</div><div id="rTot" class="val">0</div><div class="sub" id="rMean">running mean —</div></div>
     </div>
   </div>
 
   <div class="section">
-    <h2>Detection settings</h2>
+    <h2>Front-end pipeline (v3)</h2>
     <div class="row"><label>Detection axis</label>
-      <select id="rAxis"><option value="z">Z</option><option value="x">X</option><option value="y">Y</option></select>
-      <span class="num" style="font-size:11px">try X / Y if Z is flat for your device mounting</span>
+      <select id="rAxis"><option value="pca">PCA-lite (fused)</option><option value="z">Z</option><option value="x">X</option><option value="y">Y</option></select>
+      <span class="num" style="font-size:11px">PCA-lite weights all axes by variance — usually the right default</span>
     </div>
+    <div class="row"><label>Median filter length</label>
+      <select id="rMed"><option value="1">1 (off)</option><option value="3">3</option><option value="5" selected>5</option><option value="7">7</option><option value="9">9</option></select>
+      <span class="num" style="font-size:11px">spike rejection (VMD-paper preprocessing trick)</span>
+    </div>
+    <div class="row"><label>Band-pass low edge</label>
+      <input type="range" id="rBpLo" min="0" max="5" step="1" value="1">
+      <span id="rBpLoV" class="num">0.1 Hz</span></div>
+    <div class="row"><label>Band-pass high edge</label>
+      <input type="range" id="rBpHi" min="0" max="12" step="1" value="8">
+      <span id="rBpHiV" class="num">0.8 Hz</span></div>
+    <div class="row"><label>Schmitt hysteresis</label>
+      <input type="range" id="rHyst" min="0" max="30" step="1" value="0">
+      <span id="rHystV" class="num">0 mg</span></div>
+    <div class="row"><label>Autocorr window</label>
+      <input type="range" id="rAcWin" min="10" max="60" step="1" value="30">
+      <span id="rAcWinV" class="num">30 s</span></div>
+    <div class="modeline">
+      <label><input type="checkbox" id="rAdpBp" onchange="sToggle('resp_adaptive_bp',this.checked)"> Adaptive band-pass (activity-driven)</label>
+    </div>
+    <div class="note">Each sample passes a per-axis <strong>5-tap median filter</strong>, a 4th-order
+      <strong>Butterworth band-pass</strong> (defaults 0.1–0.8 Hz from Schipper et al.), then a
+      <strong>PCA-lite</strong> variance-weighted fusion of XYZ to a single composite that drives the
+      online detector. <strong>Adaptive band-pass</strong> follows magnitude variance: rest 0.1–0.5 Hz,
+      walking 0.2–0.6 Hz, running 0.3–0.7 Hz. <strong>Schmitt hysteresis</strong> requires the signal
+      to dip below −H before another rising cross above +H counts (0 = legacy). <strong>Autocorr</strong>
+      runs every 5 s on the last N s of the composite; the dominant lag in the 12–48 BPM band is the
+      breath rate, with confidence = z-score-style peak prominence.</div>
+  </div>
+
+  <div class="section">
+    <h2>Detection gates</h2>
     <div class="row"><label>Min interval</label>
       <input type="range" id="rMin" min="500" max="7500" step="100" value="1500">
       <span id="rMinV" class="num">1500 ms</span></div>
@@ -189,13 +228,11 @@ hr{border:0;border-top:1px solid var(--line);margin:12px 0}
     <div class="row"><label>Mean tracker α</label>
       <input type="range" id="rAlpha" min="100" max="8192" step="50" value="1638">
       <span id="rAlphaV" class="num">1638 (slow)</span></div>
-    <div class="note">A breath = one rising cross of the running mean. <strong>Min interval</strong>
-      rejects double-counts (1500 ms ≈ 40 BPM ceiling — drop to 800 ms for hyperventilation).
-      <strong>Min amplitude</strong> rejects noise crossings — peak-to-peak depth of the previous
-      cycle must clear this. Raise it to kill phantom events on a still surface, lower it to catch
-      shallow breaths. <strong>α</strong> is the IIR mean-tracker speed: lower = more stable, higher
-      = catches drift faster but more sensitive to noise. Defaults are tuned for normal seated
-      breathing — fast / deep breaths usually need axis swap or higher amp.</div>
+    <div class="note">A breath = one rising Schmitt-cross of the running mean on the composite signal.
+      <strong>Min interval</strong> rejects double-counts (1500 ms ≈ 40 BPM ceiling — drop to 800 ms
+      for hyperventilation). <strong>Min amplitude</strong> rejects noise crossings — peak-to-peak
+      depth of the previous cycle must clear this. <strong>α</strong> is the IIR mean-tracker speed
+      on the composite: lower = more stable, higher = catches drift faster.</div>
   </div>
 
   <div class="section">
@@ -681,6 +718,12 @@ async function tick(){
       if('resp_iir_alpha_q15' in d.cfg) setSlider('rAlpha',d.cfg.resp_iir_alpha_q15,d.cfg.resp_iir_alpha_q15>3000?'(fast)':'(slow)');
       if('resp_min_amplitude_mg' in d.cfg) setSlider('rAmp',d.cfg.resp_min_amplitude_mg,'mg');
       if('resp_axis' in d.cfg) setSel('rAxis',d.cfg.resp_axis);
+      if('resp_median_len' in d.cfg) setSel('rMed', String(d.cfg.resp_median_len));
+      if('resp_bp_low_hz_x10' in d.cfg) setSlider('rBpLo',d.cfg.resp_bp_low_hz_x10,'(×0.1 Hz)');
+      if('resp_bp_high_hz_x10' in d.cfg) setSlider('rBpHi',d.cfg.resp_bp_high_hz_x10,'(×0.1 Hz)');
+      if('resp_hysteresis_mg' in d.cfg) setSlider('rHyst',d.cfg.resp_hysteresis_mg,'mg');
+      if('resp_autocorr_window_sec' in d.cfg) setSlider('rAcWin',d.cfg.resp_autocorr_window_sec,'s');
+      if('resp_adaptive_bp' in d.cfg) document.getElementById('rAdpBp').checked=d.cfg.resp_adaptive_bp;
       if('step_axis' in d.cfg) setSel('sAxis',d.cfg.step_axis);
       if('step_adaptive' in d.cfg) document.getElementById('sAdapt').checked=d.cfg.step_adaptive;
       if('step_bandpass' in d.cfg) document.getElementById('sBp').checked=d.cfg.step_bandpass;
@@ -740,7 +783,7 @@ async function tick2(){
       setText('rTot',  d.resp.total_events);
       setText('rMean', 'running mean '+d.resp.mean+' mg');
       setText('rDepth', d.resp.amplitude_mg ? d.resp.amplitude_mg+' mg' : '— mg');
-      setText('rPhaseSub','axis '+(d.resp.axis||'z').toUpperCase()+' · gate '+(d.resp.min_amplitude_mg||0)+' mg');
+      setText('rPhaseSub','axis '+(d.resp.axis||'pca').toUpperCase()+' · gate '+(d.resp.min_amplitude_mg||0)+' mg');
       const ivl=d.resp.last_interval_ms||0;
       setText('rIvl', ivl ? (ivl<1000? ivl+' ms' : (ivl/1000).toFixed(2)+' s') : '—');
       const lastPeak=d.resp.last_peak_ms||0;
@@ -761,6 +804,25 @@ async function tick2(){
         else if(phase==='exhale'){ph.style.background='#7b341e';ph.style.color='#fbd38d';ph.textContent='○ EXHALING';}
         else{ph.style.background='#2d3748';ph.style.color='#a0aec0';ph.textContent='— FLAT';}
       }
+      /* v3 pipeline diagnostics */
+      const wx=(d.resp.pca_wx_q8||0)/256, wy=(d.resp.pca_wy_q8||0)/256, wz=(d.resp.pca_wz_q8||0)/256;
+      setText('rPcaW','X '+wx.toFixed(2)+'  Y '+wy.toFixed(2)+'  Z '+wz.toFixed(2));
+      const lo=(d.resp.bp_low_active_x10||0)/10, hi=(d.resp.bp_high_active_x10||0)/10;
+      const userLo=(d.resp.bp_low_hz_x10||0)/10, userHi=(d.resp.bp_high_hz_x10||0)/10;
+      const adp=d.resp.adaptive_bp?true:false;
+      const bpStr=lo.toFixed(1)+'–'+hi.toFixed(1)+' Hz'+(adp?' (adaptive)':'');
+      setText('rBpAct',bpStr);
+      const act=(d.resp.activity_mg2_x10||0)/10;
+      setText('rActiv',act.toFixed(1)+' mg²');
+      setText('rMedAct',(d.resp.median_len||1)+'-tap');
+      setText('rHystAct',(d.resp.hysteresis_mg||0)+' mg');
+      /* Autocorr BPM card */
+      const acBpm=d.resp.bpm_autocorr||0;
+      const acConf=d.resp.bpm_autocorr_confidence_pct||0;
+      const acAge=d.resp.autocorr_age_ms||0;
+      setText('rAcBpm', acBpm? acBpm+' BPM' : '—');
+      const ageS=acAge>0?(acAge<1000?acAge+' ms':(acAge/1000).toFixed(1)+' s'):'—';
+      setText('rAcSub','conf '+acConf+'% · age '+ageS);
     }
     if(d.steps){
       setText('sThr', d.steps.threshold+' mg');
@@ -1014,7 +1076,12 @@ bindSlider('wGrav','mg','wear_grav_diff_thresh_mg');
 bindSlider('rMin','ms','resp_min_interval_ms');
 bindSlider('rAlpha','','resp_iir_alpha_q15');
 bindSlider('rAmp','mg','resp_min_amplitude_mg');
+bindSlider('rBpLo','(×0.1 Hz)','resp_bp_low_hz_x10');
+bindSlider('rBpHi','(×0.1 Hz)','resp_bp_high_hz_x10');
+bindSlider('rHyst','mg','resp_hysteresis_mg');
+bindSlider('rAcWin','s','resp_autocorr_window_sec');
 document.getElementById('rAxis').addEventListener('change',e=>{suppress();pj('/config',JSON.stringify({resp_axis:e.target.value}));});
+document.getElementById('rMed').addEventListener('change',e=>{suppress();pj('/config',JSON.stringify({resp_median_len:+e.target.value}));});
 bindSlider('sAmpW','ms','step_amp_window_ms');
 
 document.getElementById('sAxis').addEventListener('change',e=>{suppress();pj('/config',JSON.stringify({step_axis:e.target.value}));});
