@@ -12,6 +12,7 @@ tuned and validated without reflashing.
 ├── README.md            ← you are here
 ├── aboutme.md           ← project overview, hardware, pins, build, status
 ├── app.md               ← every HTTP endpoint, JSON schemas, tunables tables
+├── algorithms.md        ← what each algo does, why, every knob explained
 ├── nrf connect.md       ← port plan: ESP32 bench → nRF52 / NCS / Zephyr
 ├── docs/                ← earlier specs (v2/v3 design notes)
 └── firmware/            ← Arduino sketch (open this folder in Arduino IDE)
@@ -42,4 +43,6 @@ arduino-cli upload  --fqbn esp32:esp32:esp32:PartitionScheme=huge_app \
 
 After flash → join WiFi `atovio-bench` / `atovio1234` → open
 `http://192.168.4.1`. See `aboutme.md` for the full picture, `app.md` for
-the API + every tunable, and `nrf connect.md` when you're ready to port.
+the API + every tunable, `algorithms.md` for how wear / respiration / step
+detection actually work and how to tune them, and `nrf connect.md` when
+you're ready to port.
